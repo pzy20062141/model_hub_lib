@@ -301,6 +301,27 @@ def create_router(
         except ModelAccessException as exc:
             return _error_response(exc, request.headers.get("x-request-id"))
 
+    @router.get("/user-cost-summary")
+    async def summarize_user_costs(
+        tenant_id: str,
+        request: Request,
+        user_id: str | None = None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            result = client.summarize_user_costs(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                start_at=start_at,
+                end_at=end_at,
+                identity=identity,
+            )
+            return _data_response(result, request, "req_user_cost_summary")
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
     return router
 
 

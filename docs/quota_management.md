@@ -19,7 +19,7 @@
 | 2 | 用户显式指定模板 | 给单个用户绑定特殊周期模板 |
 | 3 | 最高优先级角色模板 | 对 developer、analyst 等角色批量配置 |
 | 4 | 租户默认模板 | 新用户自动继承，无需逐人初始化 |
-| 5 | 平台默认无限 | 未配置时不中断业务，但仍记成本 |
+| 5 | 平台默认每月 100 积分 | 未配置时自动获得基础额度并持续记成本 |
 
 角色由宿主鉴权系统通过 `CallerIdentity.roles` 传入。相同优先级的角色按 `role_code` 升序选择，结果可复现。
 
@@ -51,7 +51,7 @@ stateDiagram-v2
 credits_used + credits_reserved + estimated_credits <= credit_limit
 ```
 
-无限额度的 `credit_limit` 为 `NULL`。预占和结算均以 `invocation_id` 为幂等键。实际用量可能高于预估，系统会如实把差额计入 `credits_used`，并在下一次调用前阻断。
+显式无限额度的 `credit_limit` 为 `NULL`；完全未配置时使用每月 100 积分的平台默认策略。预占和结算均以 `invocation_id` 为幂等键。实际用量可能高于预估，系统会如实把差额计入 `credits_used`，并在下一次调用前阻断。
 
 异常边界：
 

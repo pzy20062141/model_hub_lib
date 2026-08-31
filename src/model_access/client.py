@@ -21,6 +21,7 @@ from .contracts.quota import (
     ModelCreditRateView,
     RoleQuotaBindingInput,
     UserCostReport,
+    UserCostSummary,
     UserQuotaAssignmentInput,
     UserQuotaSummary,
     UserQuotaTemplateInput,
@@ -227,6 +228,23 @@ class ModelRepositoryClient:
             start_at=start_at,
             end_at=end_at,
             limit=limit,
+        )
+
+    def summarize_user_costs(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str | None,
+        identity: CallerIdentity,
+        start_at=None,
+        end_at=None,
+    ) -> UserCostSummary:
+        return self._user_quota().summarize_costs(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            identity=identity,
+            start_at=start_at,
+            end_at=end_at,
         )
 
     async def finalize_async_quota(self, *, invocation_id: str, usage, succeeded: bool) -> None:

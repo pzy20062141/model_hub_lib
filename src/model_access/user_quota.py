@@ -7,7 +7,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .contracts.entities import CallerIdentity
@@ -25,6 +25,8 @@ from .contracts.quota import (
     RoleQuotaBindingInput,
     UserCostItem,
     UserCostReport,
+    UserCostSummary,
+    UserCostSummaryItem,
     UserQuotaAllocation,
     UserQuotaAssignmentInput,
     UserQuotaSummary,
@@ -47,6 +49,7 @@ from .persistence.models import (
 from .persistence.repository import ModelAccessRepository
 
 _SCALE = Decimal("0.000001")
+_DEFAULT_CREDIT_LIMIT = Decimal("100")
 
 
 def _decimal(value: Any) -> Decimal:
@@ -67,8 +70,9 @@ class UserQuotaManager:
     """Child-user budget manager scoped strictly by ``tenant_id + user_id``.
 
     Provider quota, credential selection and hosted/custom fallback are deliberately
-    outside this component. A missing tenant policy means unlimited usage, while
-    every successful invocation is still written to the per-user cost ledger.
+    outside this component. A missing tenant policy uses the platform's monthly
+    100-credit default, while every successful invocation is still written to the
+    per-user cost ledger.
     """
 
     def __init__(self, repository: ModelAccessRepository):
@@ -486,6 +490,61 @@ class UserQuotaManager:
                 items=items, total_credits=sum((item.credits for item in items), Decimal("0"))
             )
 
+    def summarize_costs(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str | None,
+        identity: CallerIdentity,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> UserCostSummary:
+        if identity.tenant_id != tenant_id:
+            raise ModelAccessException(ErrorCode.PERMISSION_DENIED, "tenant identity mismatch")
+        if "tenant_admin" not in identity.roles:
+            if not identity.user_id:
+                raise ModelAccessException(
+                    ErrorCode.PERMISSION_DENIED,
+                    "a user identity is required to query personal costs",
+                )
+            if user_id not in {None, identity.user_id}:
+                raise ModelAccessException(
+                    ErrorCode.PERMISSION_DENIED, "cannot view another user's costs"
+                )
+            user_id = identity.user_id
+        with self._repository._sessions() as session:
+            statement = (
+                select(
+                    UserCostLedgerRecord.user_id,
+                    func.count(UserCostLedgerRecord.invocation_id),
+                    func.sum(UserCostLedgerRecord.credits),
+                )
+                .where(UserCostLedgerRecord.tenant_id == tenant_id)
+                .group_by(UserCostLedgerRecord.user_id)
+                .order_by(UserCostLedgerRecord.user_id)
+            )
+            if user_id:
+                statement = statement.where(UserCostLedgerRecord.user_id == user_id)
+            if start_at:
+                statement = statement.where(UserCostLedgerRecord.created_at >= start_at)
+            if end_at:
+                statement = statement.where(UserCostLedgerRecord.created_at < end_at)
+            items = [
+                UserCostSummaryItem(
+                    user_id=row_user_id,
+                    invocation_count=int(invocation_count),
+                    total_credits=_decimal(total_credits),
+                )
+                for row_user_id, invocation_count, total_credits in session.execute(statement)
+            ]
+        return UserCostSummary(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            invocation_count=sum(item.invocation_count for item in items),
+            total_credits=sum((item.total_credits for item in items), Decimal("0")),
+            by_user=items,
+        )
+
     @staticmethod
     def _period_bounds(period_type: QuotaPeriodType, now: datetime) -> tuple[datetime, datetime]:
         now = now.astimezone(UTC)
@@ -579,7 +638,13 @@ class UserQuotaManager:
             return self._template_policy(
                 template, QuotaPolicySource.TENANT_DEFAULT, template.template_id
             )
-        return _Policy(QuotaPeriodType.MONTH, None, 80, QuotaPolicySource.PLATFORM_DEFAULT, None)
+        return _Policy(
+            QuotaPeriodType.MONTH,
+            _DEFAULT_CREDIT_LIMIT,
+            80,
+            QuotaPolicySource.PLATFORM_DEFAULT,
+            None,
+        )
 
     @staticmethod
     def _template_policy(

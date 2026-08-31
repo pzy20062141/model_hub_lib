@@ -103,6 +103,20 @@ class UserCostReport(StrictModel):
     total_credits: Decimal
 
 
+class UserCostSummaryItem(StrictModel):
+    user_id: str
+    invocation_count: int
+    total_credits: Decimal
+
+
+class UserCostSummary(StrictModel):
+    tenant_id: str
+    user_id: str | None = None
+    invocation_count: int
+    total_credits: Decimal
+    by_user: list[UserCostSummaryItem]
+
+
 class UserQuotaAllocation(StrictModel):
     invocation_id: str
     configured_model_id: str

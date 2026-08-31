@@ -14,10 +14,10 @@
 | 自部署模型 | `entities.py`、`routing.py` | 部署对象、多端点加权路由、失败冷却、稳定 Service URL |
 | 凭据安全 | `security.py` | Fernet 认证加密、Secret 脱敏、SSRF / 私网 URL 策略 |
 | 用量账本 | `model_invocation_usage`、`runtime.py` | invocation_id 幂等、session/query/app/model 归集 |
-| 子用户策略装配 | `user_quota.py`、`user_quota_template`、`user_quota_assignment` | 用户覆盖 → 角色模板 → 租户默认 → 无限默认 |
+| 子用户策略装配 | `user_quota.py`、`user_quota_template`、`user_quota_assignment` | 用户覆盖 → 角色模板 → 租户默认 → 平台月度 100 积分默认 |
 | 模型积分规则 | `model_credit_rate`、`UserQuotaManager._calculate` | 按次、输入/输出 Token、billable unit 统一换算，费率快照 |
 | 调用级额度 | `user_quota_period`、`user_quota_reservation` | tenant/user 隔离、日/月周期、原子预占、实际结算、失败释放 |
-| 子用户成本 | `user_cost_ledger`、`query_user_costs` | 按调用、用户、模型和 Usage 查询成本，Decimal 精度 |
+| 子用户成本 | `user_cost_ledger`、`query_user_costs`、`summarize_user_costs` | 按调用、用户、模型和 Usage 查询或汇总成本，Decimal 精度 |
 | OpenTelemetry | `observability.py` | GenAI 和 model_access 属性、CLIENT Span、低基数 Metric |
 | 数据库连接 | `persistence/database.py` | 逻辑数据库、凭据引用、本地/云配置、连接池 |
 | 生态兼容边界 | `adapters/openai_compatible.py` | OpenAI-compatible 仅存在于 Adapter，不污染核心契约 |

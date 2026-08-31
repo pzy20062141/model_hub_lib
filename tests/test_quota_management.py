@@ -65,7 +65,9 @@ def default_template(client, limit: Decimal):  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.asyncio
-async def test_default_policy_is_unlimited_but_success_is_costed(client, provider_ref) -> None:
+async def test_default_policy_is_100_monthly_credits_and_success_is_costed(
+    client, provider_ref
+) -> None:
     model_id = await register_tenant_model(client, provider_ref)
     await client.invoke(chat_request(model_id), identity=tenant_admin())
 
@@ -78,9 +80,20 @@ async def test_default_policy_is_unlimited_but_success_is_costed(client, provide
     report = client.query_user_costs(
         tenant_id="tenant_001", user_id="user_123", identity=tenant_admin()
     )
-    assert summary.status == UserQuotaStatus.UNLIMITED
+    assert summary.status == UserQuotaStatus.ACTIVE
+    assert summary.credit_limit == Decimal("100.000000")
+    assert summary.credits_remaining == Decimal("99.000000")
     assert summary.credits_used == Decimal("1.000000")
     assert report.total_credits == Decimal("1.000000")
+
+    aggregate = client.summarize_user_costs(
+        tenant_id="tenant_001",
+        user_id=None,
+        identity=tenant_admin(),
+    )
+    assert aggregate.invocation_count == 1
+    assert aggregate.total_credits == Decimal("1.000000")
+    assert aggregate.by_user[0].user_id == "user_123"
 
 
 @pytest.mark.asyncio

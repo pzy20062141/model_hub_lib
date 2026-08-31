@@ -155,6 +155,15 @@ def test_http_registration_defaults_catalog_and_invocation(client) -> None:
         assert response.status_code == 200, response.text
         assert response.json()["data"]["total_credits"] == "1.000000"
 
+        response = http.get(
+            "/api/v1/user-cost-summary",
+            params={"tenant_id": "tenant_001"},
+            headers=ADMIN_HEADERS,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["invocation_count"] == 1
+        assert response.json()["data"]["by_user"][0]["user_id"] == "child_001"
+
 
 def test_api_protocol_mismatch_returns_stable_error(client) -> None:
     app = create_app(client)

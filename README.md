@@ -123,7 +123,7 @@ defaults = await client.set_default_model(
 - 只有目标租户的 `tenant_admin` 可以配置费率、模板、角色绑定和用户覆盖。
 - 子用户可查询自己的额度和成本；`tenant_admin` 可查询租户内任意用户或汇总列表。
 - 用户与角色主数据仍由宿主权限系统管理，本库只读取 `CallerIdentity.roles`。
-- 未配置任何策略时默认不限额，但调用仍按默认每次 1 积分记入成本台账。
+- 未配置任何策略时使用平台默认月度 100 积分，调用按默认每次 1 积分记入成本台账。
 
 ### 6.2 配置模型积分换算规则
 
@@ -222,7 +222,7 @@ client.assign_user_quota(
 
 `LIMITED` 设置硬限额，`UNLIMITED` 对该用户取消阻断但继续记账，`INHERIT` 可指定模板或继续继承角色/租户默认策略。设置 `enabled=False` 可立即停用该用户的模型调用。
 
-有效策略优先级为：用户覆盖 → 用户指定模板 → 最高优先级角色模板 → 租户默认模板 → 平台默认无限。
+有效策略优先级为：用户覆盖 → 用户指定模板 → 最高优先级角色模板 → 租户默认模板 → 平台默认月度 100 积分。
 
 ### 6.6 查询额度与逐用户成本
 
@@ -242,6 +242,13 @@ costs = client.query_user_costs(
 )
 for item in costs.items:
     print(item.user_id, item.configured_model_id, item.credits, item.usage)
+
+aggregate = client.summarize_user_costs(
+    tenant_id="tenant_001",
+    user_id=None,  # tenant_admin 汇总整个租户；子用户只能传自己的 user_id
+    identity=tenant_admin,
+)
+print(aggregate.invocation_count, aggregate.total_credits, aggregate.by_user)
 ```
 
 状态含义：
@@ -308,6 +315,7 @@ uv run python examples/aliyun_bailian_quota_demo.py
 - `PUT /api/v1/user-quotas/users`
 - `GET /api/v1/user-quotas/users/{user_id}`
 - `GET /api/v1/user-costs`
+- `GET /api/v1/user-cost-summary`
 
 启动示例：
 
