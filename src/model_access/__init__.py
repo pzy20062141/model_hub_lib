@@ -2,26 +2,18 @@ from .adapters import MockProviderAdapter, OpenAICompatibleAdapter, ProviderRegi
 from .client import ModelRepositoryClient
 from .contracts import *  # noqa: F403
 from .errors import ModelAccessException
-from .quota import (
-    HostingConfiguration,
-    InMemoryConfigurationSourceCache,
-    ManagedQuotaManager,
-    RedisConfigurationSourceCache,
-)
 from .security import FernetCredentialCipher, URLSecurityPolicy
+from .user_quota import UserQuotaManager
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "FernetCredentialCipher",
     "MockProviderAdapter",
     "ModelAccessException",
     "ModelRepositoryClient",
-    "HostingConfiguration",
-    "InMemoryConfigurationSourceCache",
-    "ManagedQuotaManager",
+    "UserQuotaManager",
     "OpenAICompatibleAdapter",
     "ProviderRegistry",
-    "RedisConfigurationSourceCache",
     "URLSecurityPolicy",
 ]

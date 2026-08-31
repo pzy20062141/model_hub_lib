@@ -14,7 +14,7 @@ from .contracts.entities import (
     RuntimeContext,
 )
 from .contracts.invocation import AdapterInvocation
-from .contracts.quota import ProviderConfiguration, QuotaAllocation
+from .contracts.quota import UserQuotaAllocation, UserQuotaSummary
 from .contracts.responses import (
     AdapterAsyncTask,
     AdapterChunk,
@@ -123,26 +123,27 @@ class QuotaManager(Protocol):
 
 
 @runtime_checkable
-class QuotaAwareManager(QuotaManager, Protocol):
-    async def acquire(
+class UserQuotaAwareManager(QuotaManager, Protocol):
+    async def acquire_user_quota(
         self,
         *,
         invocation_id: str,
         tenant_id: str,
-        user_id: str | None,
-        requested: Any,
+        user_id: str,
+        roles: set[str],
+        configured_model_id: str,
         operation: str,
-        estimated_tokens: int,
-    ) -> QuotaAllocation: ...
+        estimated_usage: Usage,
+    ) -> UserQuotaAllocation: ...
 
-    async def describe(
+    def get_summary(
         self,
         *,
-        requested: Any,
         tenant_id: str,
-        user_id: str | None,
-        bypass_cache: bool = False,
-    ) -> ProviderConfiguration: ...
+        user_id: str,
+        roles: set[str],
+        identity: CallerIdentity,
+    ) -> UserQuotaSummary: ...
 
 
 class Observability(Protocol):

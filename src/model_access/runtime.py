@@ -32,7 +32,13 @@ from .contracts.responses import (
 from .errors import ModelAccessException
 from .observability import OpenTelemetryFacade, SpanHandle
 from .persistence.repository import ModelAccessRepository, ResolvedModelRecord
-from .protocols import ArtifactStore, CredentialCipher, QuotaAwareManager, QuotaManager, TaskBackend
+from .protocols import (
+    ArtifactStore,
+    CredentialCipher,
+    QuotaManager,
+    TaskBackend,
+    UserQuotaAwareManager,
+)
 from .routing import SelfHostedEndpointRouter
 
 
@@ -108,35 +114,17 @@ class ModelRuntimeService:
 
         resolved = self._resolve_model(request)
         quota_allocation = None
-        if isinstance(self._quota, QuotaAwareManager):
-            quota_allocation = await self._quota.acquire(
+        if isinstance(self._quota, UserQuotaAwareManager):
+            assert request.context.user_id is not None
+            quota_allocation = await self._quota.acquire_user_quota(
                 invocation_id=request.context.invocation_id,
                 tenant_id=request.context.tenant_id,
                 user_id=request.context.user_id,
-                requested=resolved,
+                roles=identity.roles,
+                configured_model_id=resolved.model.configured_model_id,
                 operation=request.operation.value,
-                estimated_tokens=self._estimate_tokens(request, resolved),
+                estimated_usage=self._estimate_usage(request, resolved),
             )
-            try:
-                if quota_allocation.configured_model_id != resolved.model.configured_model_id:
-                    selected = self._repository.resolve_model(
-                        configured_model_id=quota_allocation.configured_model_id,
-                        tenant_id=request.context.tenant_id,
-                        user_id=request.context.user_id,
-                    )
-                    if selected is None:
-                        raise ModelAccessException(
-                            ErrorCode.PROVIDER_UNAVAILABLE,
-                            "quota arbitration selected an unavailable model configuration",
-                        )
-                    resolved = self._validate_resolved(request, selected)
-            except Exception:
-                await self._quota.settle(
-                    invocation_id=request.context.invocation_id,
-                    usage=None,
-                    succeeded=False,
-                )
-                raise
 
         reservation_active = quota_allocation is not None
         try:
@@ -214,13 +202,25 @@ class ModelRuntimeService:
 
     def _resolve_model(self, request: ModelInvocationRequest) -> ResolvedModelRecord:
         selector = request.model
+        assert selector is not None
+        configured_model_id = selector.configured_model_id
+        if selector.uses_default:
+            configured_model_id = self._repository.get_tenant_default_model(
+                tenant_id=request.context.tenant_id,
+                model_type=selector.model_type,
+            )
+            if not configured_model_id:
+                raise ModelAccessException(
+                    ErrorCode.MODEL_NOT_FOUND,
+                    f"no default model is configured for {selector.model_type.value}",
+                )
         provider_key = (
             (selector.provider.plugin_id, selector.provider.provider_id)
             if selector.provider
             else None
         )
         resolved = self._repository.resolve_model(
-            configured_model_id=selector.configured_model_id,
+            configured_model_id=configured_model_id,
             tenant_id=request.context.tenant_id,
             user_id=request.context.user_id,
             provider_key=provider_key,
@@ -270,6 +270,7 @@ class ModelRuntimeService:
     def _validate_resolved(
         request: ModelInvocationRequest, resolved: ResolvedModelRecord
     ) -> ResolvedModelRecord:
+        assert request.model is not None
         if resolved.model.status != ModelStatus.ACTIVE.value:
             code = (
                 ErrorCode.MODEL_DISABLED
@@ -293,6 +294,7 @@ class ModelRuntimeService:
 
     @staticmethod
     def _estimate_tokens(request: ModelInvocationRequest, resolved: ResolvedModelRecord) -> int:
+        assert request.model is not None
         input_tokens = max(1, (len(request.input.model_dump_json()) + 3) // 4)
         output_tokens = 0
         if request.model.model_type == ModelType.TEXT_GENERATION:
@@ -304,6 +306,21 @@ class ModelRuntimeService:
             if resolved.model.max_output_tokens:
                 output_tokens = min(output_tokens, resolved.model.max_output_tokens)
         return input_tokens + output_tokens
+
+    @classmethod
+    def _estimate_usage(
+        cls, request: ModelInvocationRequest, resolved: ResolvedModelRecord
+    ) -> Usage:
+        total = cls._estimate_tokens(request, resolved)
+        input_tokens = max(1, (len(request.input.model_dump_json()) + 3) // 4)
+        output_tokens = max(0, total - input_tokens)
+        return Usage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total,
+            billable_units=total,
+            usage_source="estimated",
+        )
 
     async def _invoke_with_retry(self, adapter, invocation, span):  # type: ignore[no-untyped-def]
         attempts = 1 if invocation.response_mode == ResponseMode.STREAMING else self._max_attempts
@@ -356,7 +373,13 @@ class ModelRuntimeService:
                 "failed to persist provider artifacts",
             )
             span.record_exception(exc, wrapped.code.value)
-            await self._finalize_failure(state, wrapped, span)
+            await self._finalize_failure(
+                state,
+                wrapped,
+                span,
+                usage=response.usage,
+                provider_billed=True,
+            )
             raise wrapped from exc
         latency_ms = int((time.monotonic() - state.started_at) * 1000)
         result = InvocationResult(
@@ -405,11 +428,8 @@ class ModelRuntimeService:
             raise wrapped from exc
         latency_ms = int((time.monotonic() - state.started_at) * 1000)
         self._record_usage(state, None, latency_ms, InvocationStatus.ACCEPTED.value, None)
-        await self._quota.settle(
-            invocation_id=state.request.context.invocation_id or "",
-            usage=None,
-            succeeded=True,
-        )
+        # Async provider work is only accepted here. Keep the reservation active;
+        # the poller/webhook must call ``finalize_async_quota`` with final usage.
         span.set_attribute("model_access.task.id", task_id)
         span.__exit__(None, None, None)
         return AsyncInvocationResult(
@@ -467,11 +487,15 @@ class ModelRuntimeService:
             await self._finalize_success(state, usage, latency_ms, span)
         except ModelAccessException as exc:
             yield StreamEvent(event="error", data=exc.to_dict())
-            await self._finalize_failure(state, exc, span)
+            await self._finalize_failure(
+                state, exc, span, usage=usage, provider_billed=first_chunk_seen
+            )
         except (GeneratorExit, asyncio.CancelledError):
             span.set_attribute("model_access.cancelled", True)
             exc = ModelAccessException(ErrorCode.PROVIDER_UNAVAILABLE, "stream was cancelled")
-            await self._finalize_failure(state, exc, span)
+            await self._finalize_failure(
+                state, exc, span, usage=usage, provider_billed=first_chunk_seen
+            )
             raise
         except Exception as exc:
             wrapped = ModelAccessException(
@@ -481,7 +505,9 @@ class ModelRuntimeService:
             )
             span.record_exception(exc, wrapped.code.value)
             yield StreamEvent(event="error", data=wrapped.to_dict())
-            await self._finalize_failure(state, wrapped, span)
+            await self._finalize_failure(
+                state, wrapped, span, usage=usage, provider_billed=first_chunk_seen
+            )
 
     async def _store_artifacts(
         self,
@@ -538,13 +564,16 @@ class ModelRuntimeService:
         state: InvocationState,
         exc: ModelAccessException,
         span: SpanHandle,
+        *,
+        usage: Usage | None = None,
+        provider_billed: bool = False,
     ) -> None:
         latency_ms = int((time.monotonic() - state.started_at) * 1000)
         self._record_usage(state, None, latency_ms, InvocationStatus.FAILED.value, exc.code.value)
         await self._quota.settle(
             invocation_id=state.request.context.invocation_id or "",
-            usage=None,
-            succeeded=False,
+            usage=usage,
+            succeeded=provider_billed,
         )
         self._observability.record_invocation(
             provider=state.invocation.provider.provider_id,
@@ -605,10 +634,11 @@ class ModelRuntimeService:
     def _authorize_context(context: RuntimeContext, identity: CallerIdentity) -> None:
         if context.tenant_id != identity.tenant_id:
             raise ModelAccessException(ErrorCode.PERMISSION_DENIED, "tenant identity mismatch")
+        if not context.user_id:
+            raise ModelAccessException(
+                ErrorCode.CONTEXT_INVALID,
+                "user_id is required for per-user cost attribution, including service calls",
+            )
         if not identity.is_service:
-            if not context.user_id:
-                raise ModelAccessException(
-                    ErrorCode.CONTEXT_INVALID, "user_id is required for UI calls"
-                )
             if context.user_id != identity.user_id:
                 raise ModelAccessException(ErrorCode.PERMISSION_DENIED, "user identity mismatch")

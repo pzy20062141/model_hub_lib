@@ -1,0 +1,38 @@
+protocol_version: "1.1"
+provider:
+  plugin_id: builtin/baidu-qianfan
+  provider_id: baidu_qianfan
+display_name:
+  default: Baidu AI Cloud Qianfan
+  zh_Hans: 百度智能云千帆
+default_base_url: https://qianfan.baidubce.com/v2
+supported_model_types:
+  - text_generation
+capabilities:
+  supports_streaming: true
+  supports_tools: true
+  supports_vision: true
+  supports_json_schema: true
+  supports_system_message: true
+  supports_token_counting: true
+  supports_multimodal: true
+dynamic_model_discovery: true
+models:
+  - model: ernie-4.5-turbo-32k
+    label: ERNIE 4.5 Turbo 32K
+    model_type: text_generation
+    input_modalities: [text]
+    output_modalities: [text]
+    categories: [TEXT_MODEL]
+    operations: [chat]
+    features: [streaming, tool_calling, json_schema]
+    context_window: 32768
+  - model: ernie-4.5-8k-preview
+    label: ERNIE 4.5 8K Preview
+    model_type: text_generation
+    input_modalities: [text, image]
+    output_modalities: [text]
+    categories: [TEXT_MODEL, VISION_MODEL]
+    operations: [chat]
+    features: [streaming, tool_calling, json_schema]
+    context_window: 8192

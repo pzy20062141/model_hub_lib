@@ -8,15 +8,13 @@ from typing import cast
 import httpx
 
 from model_access import FernetCredentialCipher, ModelRepositoryClient, URLSecurityPolicy
-from model_access.adapters import OpenAICompatibleAdapter, load_provider_manifest
+from model_access.adapters import OpenAICompatibleAdapter, load_builtin_provider_manifest
 from model_access.contracts.entities import CallerIdentity, CredentialInput, RuntimeContext
 from model_access.contracts.enums import (
     CredentialScope,
     ModelOperation,
     ModelType,
-    ProviderQuotaType,
-    ProviderType,
-    QuotaUnit,
+    QuotaOverrideMode,
     ResponseMode,
 )
 from model_access.contracts.invocation import (
@@ -25,11 +23,14 @@ from model_access.contracts.invocation import (
     ModelListQuery,
     ModelRegistrationOptions,
     ModelRegistrationRequest,
-    ModelSelector,
     PromptMessage,
+    TenantDefaultModelUpdateRequest,
     TextContentPart,
 )
-from model_access.contracts.quota import ProviderQuotaPoolInput
+from model_access.contracts.quota import (
+    ModelCreditRateInput,
+    UserQuotaAssignmentInput,
+)
 from model_access.contracts.responses import InvocationResult, StreamEvent
 
 BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -41,7 +42,6 @@ QUERY = "你好，请问你可以做哪些事情"
 
 def build_chat_request(
     *,
-    configured_model_id: str,
     query_id: str,
     response_mode: ResponseMode,
 ) -> ModelInvocationRequest:
@@ -51,10 +51,6 @@ def build_chat_request(
             user_id=END_USER_ID,
             session_id="session_bailian_demo",
             query_id=query_id,
-        ),
-        model=ModelSelector(
-            configured_model_id=configured_model_id,
-            model_type=ModelType.TEXT_GENERATION,
         ),
         operation=ModelOperation.CHAT,
         input=ChatInput(
@@ -74,13 +70,11 @@ def build_chat_request(
 async def invoke_blocking(
     *,
     client: ModelRepositoryClient,
-    configured_model_id: str,
     identity: CallerIdentity,
 ) -> str:
     """非流式调用：等待完整响应后一次性返回 InvocationResult。"""
     result = await client.invoke(
         build_chat_request(
-            configured_model_id=configured_model_id,
             query_id="query_bailian_blocking_001",
             response_mode=ResponseMode.BLOCKING,
         ),
@@ -100,13 +94,11 @@ async def invoke_blocking(
 async def invoke_streaming(
     *,
     client: ModelRepositoryClient,
-    configured_model_id: str,
     identity: CallerIdentity,
 ) -> str:
     """流式调用：逐个消费 StreamEvent，并实时输出文本增量。"""
     result = await client.invoke(
         build_chat_request(
-            configured_model_id=configured_model_id,
             query_id="query_bailian_streaming_001",
             response_mode=ResponseMode.STREAMING,
         ),
@@ -144,7 +136,7 @@ async def run_demo(
     api_key: str,
     http_client: httpx.AsyncClient | None = None,
 ) -> tuple[str, str]:
-    manifest = load_provider_manifest("config/providers/aliyun-bailian.yaml")
+    manifest = load_builtin_provider_manifest("aliyun_bailian")
     provider_descriptor, model_manifest = manifest.build()
     provider_ref = provider_descriptor.provider
 
@@ -165,6 +157,11 @@ async def run_demo(
         tenant_id=TENANT_ID,
         user_id=ADMIN_USER_ID,
         roles={"system_admin"},
+    )
+    tenant_admin = CallerIdentity(
+        tenant_id=TENANT_ID,
+        user_id="tenant_admin_001",
+        roles={"tenant_admin"},
     )
     tenant_user = CallerIdentity(tenant_id=TENANT_ID, user_id=END_USER_ID)
 
@@ -191,24 +188,37 @@ async def run_demo(
         )
         print("注册模型配置：", registration.configured_model_ids)
 
-        quota = client.configure_quota_pool(
-            ProviderQuotaPoolInput(
+        # 将 qwen-plus 的供应商用量换算成平台统一积分。这里以每次请求
+        # 1 积分、每 1000 输入/输出 token 各 1 积分为例。
+        qwen_plus_id = registration.configured_model_ids[0]
+        rate = client.configure_model_credit_rate(
+            ModelCreditRateInput(
                 tenant_id=TENANT_ID,
-                provider=provider_ref,
-                quota_type=ProviderQuotaType.TRIAL,
-                quota_unit=QuotaUnit.TOKENS,
-                quota_limit=100_000,
-                restrict_models={"qwen-plus"},
+                configured_model_id=qwen_plus_id,
+                per_request_credits=1,
+                input_credits_per_1k=1,
+                output_credits_per_1k=1,
             ),
-            identity=system_admin,
+            identity=tenant_admin,
         )
-        client.set_provider_preference(
+        # 为当前子用户设置月度 1000 积分硬限额；不建立 tenant/provider 总池。
+        client.assign_user_quota(
+            UserQuotaAssignmentInput(
+                tenant_id=TENANT_ID,
+                user_id=END_USER_ID,
+                override_mode=QuotaOverrideMode.LIMITED,
+                credit_limit=1000,
+            ),
+            identity=tenant_admin,
+        )
+        user_quota = client.get_user_quota(
             tenant_id=TENANT_ID,
-            provider=provider_ref,
-            preferred_provider_type=ProviderType.SYSTEM,
-            identity=system_admin,
+            user_id=END_USER_ID,
+            roles=set(),
+            identity=tenant_admin,
         )
-        print("租户配额：", quota.model_dump(mode="json"))
+        print("模型计费规则：", rate.model_dump(mode="json"))
+        print("子用户配额：", user_quota.model_dump(mode="json"))
 
         models = await client.list_models(
             ModelListQuery(
@@ -220,27 +230,39 @@ async def run_demo(
             identity=tenant_user,
         )
         if not models.items:
-            raise RuntimeError("当前租户没有配额可用的文本生成模型")
+            raise RuntimeError("当前子用户没有可用的文本生成模型")
         selected = models.items[0]
         print(
             "选中模型：",
             selected.model,
-            "using=",
-            selected.using_provider_type,
-            "remaining=",
-            selected.quota_remaining,
+            "user_quota_remaining=",
+            selected.user_quota_remaining,
         )
+
+        defaults = await client.set_default_model(
+            TenantDefaultModelUpdateRequest(
+                tenant_id=TENANT_ID,
+                configured_model_id=selected.configured_model_id,
+            ),
+            model_type=ModelType.TEXT_GENERATION,
+            identity=tenant_admin,
+        )
+        print("文本生成默认模型：", defaults.defaults[ModelType.TEXT_GENERATION])
 
         blocking_answer = await invoke_blocking(
             client=client,
-            configured_model_id=selected.configured_model_id,
             identity=tenant_user,
         )
         streaming_answer = await invoke_streaming(
             client=client,
-            configured_model_id=selected.configured_model_id,
             identity=tenant_user,
         )
+        costs = client.query_user_costs(
+            tenant_id=TENANT_ID,
+            user_id=END_USER_ID,
+            identity=tenant_admin,
+        )
+        print("子用户累计成本：", costs.total_credits, "积分")
         return blocking_answer, streaming_answer
     finally:
         await client.close()

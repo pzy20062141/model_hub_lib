@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import Field
@@ -12,10 +13,10 @@ from .enums import (
     ModelCategory,
     ModelStatus,
     ModelType,
-    ProviderQuotaType,
     ProviderType,
-    QuotaUnit,
+    UserQuotaStatus,
 )
+from .quota import UserQuotaSummary
 
 
 def utc_now() -> datetime:
@@ -131,18 +132,21 @@ class ConfiguredModelItem(StrictModel):
     credential: CredentialSummary
     status: ModelStatus
     provider_type: ProviderType = ProviderType.CUSTOM
-    preferred_provider_type: ProviderType = ProviderType.CUSTOM
-    using_provider_type: ProviderType | None = ProviderType.CUSTOM
-    effective_configured_model_id: str | None = None
-    quota_type: ProviderQuotaType | None = None
-    quota_unit: QuotaUnit | None = None
-    quota_remaining: int | None = None
-    fallback_reason: str | None = None
+    user_quota_status: UserQuotaStatus | None = None
+    user_quota_remaining: Decimal | None = None
+    is_default: bool = False
 
 
 class ModelListResult(StrictModel):
     items: list[ConfiguredModelItem]
     next_page_token: str | None = None
+    default_models: dict[ModelType, str | None] = Field(default_factory=dict)
+    user_quota: UserQuotaSummary | None = None
+
+
+class TenantDefaultModelsResult(StrictModel):
+    tenant_id: str
+    defaults: dict[ModelType, str | None]
 
 
 class InvocationResult(StrictModel):

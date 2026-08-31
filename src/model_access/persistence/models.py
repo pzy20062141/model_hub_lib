@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -95,6 +96,25 @@ class ConfiguredModelRecord(Base):
     )
 
 
+class TenantDefaultModelRecord(Base):
+    __tablename__ = "tenant_default_model"
+    __table_args__ = (Index("ix_tenant_default_model_configured", "configured_model_id"),)
+
+    tenant_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    model_type: Mapped[str] = mapped_column(String(40), primary_key=True)
+    configured_model_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("configured_model.configured_model_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class ModelInvocationUsageRecord(Base):
     __tablename__ = "model_invocation_usage"
 
@@ -112,6 +132,162 @@ class ModelInvocationUsageRecord(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     trace_id: Mapped[str | None] = mapped_column(String(64), index=True)
     error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class ModelCreditRateRecord(Base):
+    __tablename__ = "model_credit_rate"
+
+    tenant_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    configured_model_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("configured_model.configured_model_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    per_request_credits: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    input_credits_per_1k: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    output_credits_per_1k: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    billable_unit_credits: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class UserQuotaTemplateRecord(Base):
+    __tablename__ = "user_quota_template"
+    __table_args__ = (
+        Index("ix_user_quota_template_default", "tenant_id", "is_default", "enabled"),
+    )
+
+    template_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    period_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    credit_limit: Mapped[Any | None] = mapped_column(Numeric(20, 6))
+    soft_limit_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class UserQuotaRoleBindingRecord(Base):
+    __tablename__ = "user_quota_role_binding"
+
+    tenant_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    role_code: Mapped[str] = mapped_column(String(128), primary_key=True)
+    template_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("user_quota_template.template_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class UserQuotaAssignmentRecord(Base):
+    __tablename__ = "user_quota_assignment"
+
+    tenant_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    template_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("user_quota_template.template_id", ondelete="SET NULL")
+    )
+    override_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    credit_limit: Mapped[Any | None] = mapped_column(Numeric(20, 6))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class UserQuotaPeriodRecord(Base):
+    __tablename__ = "user_quota_period"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "user_id", "period_start", "period_end", name="uq_user_quota_period"
+        ),
+        Index("ix_user_quota_period_lookup", "tenant_id", "user_id", "period_end"),
+    )
+
+    period_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    period_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    credit_limit: Mapped[Any | None] = mapped_column(Numeric(20, 6))
+    credits_used: Mapped[Any] = mapped_column(Numeric(20, 6), default=0, nullable=False)
+    credits_reserved: Mapped[Any] = mapped_column(Numeric(20, 6), default=0, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    source_id: Mapped[str | None] = mapped_column(String(128))
+    soft_limit_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
+class UserQuotaReservationRecord(Base):
+    __tablename__ = "user_quota_reservation"
+
+    invocation_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    period_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("user_quota_period.period_id"), nullable=False, index=True
+    )
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    configured_model_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(String(40), nullable=False)
+    estimated_credits: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    actual_credits: Mapped[Any | None] = mapped_column(Numeric(20, 6))
+    estimated_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    rate_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserCostLedgerRecord(Base):
+    __tablename__ = "user_cost_ledger"
+    __table_args__ = (Index("ix_user_cost_query", "tenant_id", "user_id", "created_at"),)
+
+    invocation_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    configured_model_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(String(40), nullable=False)
+    usage: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    credits: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=False)
+    rate_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+
+
+class UserQuotaAuditRecord(Base):
+    __tablename__ = "user_quota_audit"
+
+    audit_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    operator_user_id: Mapped[str | None] = mapped_column(String(128))
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )

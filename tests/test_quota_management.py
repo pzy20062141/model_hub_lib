@@ -1,330 +1,221 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from sqlalchemy import select
 
-from model_access import (
-    FernetCredentialCipher,
-    HostingConfiguration,
-    ModelAccessException,
-    ModelRepositoryClient,
-    URLSecurityPolicy,
-)
+from model_access import ModelAccessException
 from model_access.adapters import MockProviderAdapter
 from model_access.contracts.entities import CallerIdentity, CredentialInput
 from model_access.contracts.enums import (
     CredentialScope,
     ErrorCode,
-    ModelStatus,
-    ModelType,
-    ProviderQuotaType,
-    ProviderType,
-    QuotaUnit,
+    QuotaOverrideMode,
+    QuotaPeriodType,
+    QuotaPolicySource,
+    UserQuotaStatus,
 )
-from model_access.contracts.invocation import ModelListQuery
-from model_access.contracts.quota import HostingQuotaDefinition, ProviderQuotaPoolInput
+from model_access.contracts.quota import (
+    ModelCreditRateInput,
+    RoleQuotaBindingInput,
+    UserQuotaAssignmentInput,
+    UserQuotaTemplateInput,
+)
 from model_access.persistence.models import (
-    ModelInvocationUsageRecord,
-    ProviderQuotaRecord,
-    QuotaReservationRecord,
+    UserCostLedgerRecord,
+    UserQuotaReservationRecord,
 )
 
 from .helpers import chat_request, registration_request
 
 
-class FailingMockProviderAdapter(MockProviderAdapter):
-    async def invoke(self, invocation):  # type: ignore[no-untyped-def]
-        del invocation
-        raise ModelAccessException(
-            ErrorCode.PROVIDER_UNAVAILABLE,
-            "planned provider failure",
-            retryable=False,
-        )
+def tenant_admin() -> CallerIdentity:
+    return CallerIdentity(tenant_id="tenant_001", user_id="user_123", roles={"tenant_admin"})
 
 
-def admin_identity() -> CallerIdentity:
-    return CallerIdentity(
-        tenant_id="tenant_001",
-        user_id="user_123",
-        roles={"system_admin"},
-    )
-
-
-def scoped_registration(provider_ref, scope: CredentialScope, name: str):  # type: ignore[no-untyped-def]
-    request = registration_request(provider_ref)
-    return request.model_copy(
+async def register_tenant_model(client, provider_ref) -> str:  # type: ignore[no-untyped-def]
+    request = registration_request(provider_ref).model_copy(
         update={
             "credential": CredentialInput(
-                name=name,
+                name="tenant credential",
                 base_url="https://mock.local/v1",
-                api_key=f"{name}-secret",
-                scope=scope,
+                api_key="tenant-secret",
+                scope=CredentialScope.TENANT,
             )
         }
     )
-
-
-async def register_scope(client, provider_ref, scope: CredentialScope, key: str) -> str:  # type: ignore[no-untyped-def]
     result = await client.register_model(
-        scoped_registration(provider_ref, scope, key),
-        identity=admin_identity(),
-        idempotency_key=key,
+        request, identity=tenant_admin(), idempotency_key="tenant-model"
     )
     return result.configured_model_ids[0]
 
 
-def add_pool(
-    client,
-    provider_ref,
-    quota_type: ProviderQuotaType,
-    limit: int,
-    *,
-    unit: QuotaUnit = QuotaUnit.TIMES,
-):  # type: ignore[no-untyped-def]
-    return client.configure_quota_pool(
-        ProviderQuotaPoolInput(
+def default_template(client, limit: Decimal):  # type: ignore[no-untyped-def]
+    return client.configure_user_quota_template(
+        UserQuotaTemplateInput(
             tenant_id="tenant_001",
-            provider=provider_ref,
-            quota_type=quota_type,
-            quota_unit=unit,
-            quota_limit=limit,
-            restrict_models={"mock-chat"},
+            name="monthly default",
+            period_type=QuotaPeriodType.MONTH,
+            credit_limit=limit,
+            is_default=True,
         ),
-        identity=admin_identity(),
+        identity=tenant_admin(),
     )
 
 
 @pytest.mark.asyncio
-async def test_hosted_quota_priority_is_paid_free_trial(client, provider_ref) -> None:
-    system_model_id = await register_scope(
-        client, provider_ref, CredentialScope.SYSTEM, "system-priority"
-    )
-    trial = add_pool(client, provider_ref, ProviderQuotaType.TRIAL, 10)
-    free = add_pool(client, provider_ref, ProviderQuotaType.FREE, 10)
-    paid = add_pool(client, provider_ref, ProviderQuotaType.PAID, 1)
-    client.set_provider_preference(
+async def test_default_policy_is_unlimited_but_success_is_costed(client, provider_ref) -> None:
+    model_id = await register_tenant_model(client, provider_ref)
+    await client.invoke(chat_request(model_id), identity=tenant_admin())
+
+    summary = client.get_user_quota(
         tenant_id="tenant_001",
-        provider=provider_ref,
-        preferred_provider_type=ProviderType.SYSTEM,
-        identity=admin_identity(),
+        user_id="user_123",
+        roles=tenant_admin().roles,
+        identity=tenant_admin(),
     )
-
-    await client.invoke(chat_request(system_model_id), identity=admin_identity())
-
-    with client.repository._sessions() as session:
-        pools = {item.quota_id: item for item in session.scalars(select(ProviderQuotaRecord)).all()}
-    assert pools[paid.quota_id].quota_used == 1
-    assert pools[paid.quota_id].is_valid is False
-    assert pools[free.quota_id].quota_used == 0
-    assert pools[trial.quota_id].quota_used == 0
+    report = client.query_user_costs(
+        tenant_id="tenant_001", user_id="user_123", identity=tenant_admin()
+    )
+    assert summary.status == UserQuotaStatus.UNLIMITED
+    assert summary.credits_used == Decimal("1.000000")
+    assert report.total_credits == Decimal("1.000000")
 
 
 @pytest.mark.asyncio
-async def test_exhausted_system_quota_falls_back_and_invalidates_cache(
-    client, provider_ref
-) -> None:
-    custom_model_id = await register_scope(
-        client, provider_ref, CredentialScope.USER, "custom-fallback"
-    )
-    system_model_id = await register_scope(
-        client, provider_ref, CredentialScope.SYSTEM, "system-fallback"
-    )
-    add_pool(client, provider_ref, ProviderQuotaType.PAID, 1)
-    client.set_provider_preference(
-        tenant_id="tenant_001",
-        provider=provider_ref,
-        preferred_provider_type=ProviderType.SYSTEM,
-        identity=admin_identity(),
-    )
+async def test_user_budget_prevents_second_call(client, provider_ref) -> None:
+    model_id = await register_tenant_model(client, provider_ref)
+    default_template(client, Decimal("1"))
 
-    await client.invoke(chat_request(system_model_id), identity=admin_identity())
-    models = await client.list_models(
-        ModelListQuery(
-            tenant_id="tenant_001",
-            user_id="user_123",
-            model_type=ModelType.TEXT_GENERATION,
-        ),
-        identity=admin_identity(),
-    )
-    system_item = next(item for item in models.items if item.provider_type == ProviderType.SYSTEM)
-    assert system_item.status == ModelStatus.ACTIVE
-    assert system_item.preferred_provider_type == ProviderType.SYSTEM
-    assert system_item.using_provider_type == ProviderType.CUSTOM
-    assert system_item.effective_configured_model_id == custom_model_id
-    assert system_item.fallback_reason == "SYSTEM_QUOTA_EXHAUSTED"
-
-    second = chat_request(system_model_id)
-    second.context.query_id = "query_fallback"
-    await client.invoke(second, identity=admin_identity())
-    with client.repository._sessions() as session:
-        reservation = session.get(QuotaReservationRecord, second.context.invocation_id)
-        usage = session.get(ModelInvocationUsageRecord, second.context.invocation_id)
-    assert reservation and reservation.provider_type == ProviderType.CUSTOM.value
-    assert reservation.configured_model_id == custom_model_id
-    assert usage and usage.configured_model_id == custom_model_id
-
-
-@pytest.mark.asyncio
-async def test_quota_exceeded_status_when_no_custom_fallback(client, provider_ref) -> None:
-    system_model_id = await register_scope(
-        client, provider_ref, CredentialScope.SYSTEM, "system-exhausted"
-    )
-    client.set_provider_preference(
-        tenant_id="tenant_001",
-        provider=provider_ref,
-        preferred_provider_type=ProviderType.SYSTEM,
-        identity=admin_identity(),
-    )
-
-    models = await client.list_models(
-        ModelListQuery(
-            tenant_id="tenant_001",
-            user_id="user_123",
-            model_type=ModelType.TEXT_GENERATION,
-            status=ModelStatus.QUOTA_EXCEEDED,
-        ),
-        identity=admin_identity(),
-    )
-    assert len(models.items) == 1
-    assert models.items[0].status == ModelStatus.QUOTA_EXCEEDED
-
+    await client.invoke(chat_request(model_id), identity=tenant_admin())
+    second = chat_request(model_id)
+    second.context.query_id = "query_2"
     with pytest.raises(ModelAccessException) as error:
-        await client.invoke(chat_request(system_model_id), identity=admin_identity())
+        await client.invoke(second, identity=tenant_admin())
+
     assert error.value.code == ErrorCode.QUOTA_EXCEEDED
+    summary = client.get_user_quota(
+        tenant_id="tenant_001",
+        user_id="user_123",
+        roles=set(),
+        identity=tenant_admin(),
+    )
+    assert summary.source_type == QuotaPolicySource.TENANT_DEFAULT
+    assert summary.status == UserQuotaStatus.EXCEEDED
 
 
 @pytest.mark.asyncio
-async def test_preferred_custom_without_credential_is_no_configure(client, provider_ref) -> None:
-    system_model_id = await register_scope(
-        client, provider_ref, CredentialScope.SYSTEM, "system-custom-preference"
-    )
-    add_pool(client, provider_ref, ProviderQuotaType.PAID, 5)
-    client.set_provider_preference(
-        tenant_id="tenant_001",
-        provider=provider_ref,
-        preferred_provider_type=ProviderType.CUSTOM,
-        identity=admin_identity(),
-    )
-
-    models = await client.list_models(
-        ModelListQuery(
+async def test_actual_cost_uses_rate_snapshot(client, provider_ref) -> None:
+    model_id = await register_tenant_model(client, provider_ref)
+    client.configure_model_credit_rate(
+        ModelCreditRateInput(
             tenant_id="tenant_001",
-            user_id="user_123",
-            model_type=ModelType.TEXT_GENERATION,
-            status=ModelStatus.NO_CONFIGURE,
+            configured_model_id=model_id,
+            per_request_credits=Decimal("1"),
+            input_credits_per_1k=Decimal("100"),
+            output_credits_per_1k=Decimal("100"),
         ),
-        identity=admin_identity(),
+        identity=tenant_admin(),
     )
-    assert len(models.items) == 1
-    with pytest.raises(ModelAccessException) as error:
-        await client.invoke(chat_request(system_model_id), identity=admin_identity())
-    assert error.value.code == ErrorCode.CREDENTIAL_REQUIRED
+    default_template(client, Decimal("100"))
+    await client.invoke(chat_request(model_id), identity=tenant_admin())
 
-
-@pytest.mark.asyncio
-async def test_cloud_hosting_lazily_initializes_and_settles_token_quota(
-    provider_ref, provider_descriptor, model_descriptors
-) -> None:
-    hosting = HostingConfiguration(
-        edition="CLOUD",
-        quotas=[
-            HostingQuotaDefinition(
-                provider=provider_ref,
-                quota_type=ProviderQuotaType.TRIAL,
-                quota_unit=QuotaUnit.TOKENS,
-                quota_limit=1000,
-                restrict_models={"mock-chat"},
-            )
-        ],
+    report = client.query_user_costs(
+        tenant_id="tenant_001", user_id="user_123", identity=tenant_admin()
     )
-    client = ModelRepositoryClient.sqlite(
-        encryption_key=FernetCredentialCipher.generate_key(),
-        url_policy=URLSecurityPolicy(allowed_hosts={"mock.local"}),
-        hosting=hosting,
-    )
-    client.register_adapter(MockProviderAdapter(provider_descriptor, model_descriptors))
-    system_model_id = await register_scope(
-        client, provider_ref, CredentialScope.SYSTEM, "system-lazy-trial"
-    )
-    client.set_provider_preference(
-        tenant_id="tenant_001",
-        provider=provider_ref,
-        preferred_provider_type=ProviderType.SYSTEM,
-        identity=admin_identity(),
-    )
-
-    await client.invoke(chat_request(system_model_id), identity=admin_identity())
+    assert report.total_credits == Decimal("1.500000")
     with client.repository._sessions() as session:
-        pool = session.scalar(select(ProviderQuotaRecord))
-    assert pool is not None
-    assert pool.quota_type == ProviderQuotaType.TRIAL.value
-    assert pool.quota_used == 5
-    assert pool.quota_reserved == 0
-    assert pool.is_valid is True
-    await client.close()
+        ledger = session.scalar(select(UserCostLedgerRecord))
+    assert ledger is not None
+    assert ledger.rate_snapshot["version"] == "1"
 
 
 @pytest.mark.asyncio
-async def test_failed_provider_call_releases_reserved_quota(
+async def test_failed_provider_call_releases_reservation(
     client, provider_ref, provider_descriptor, model_descriptors
 ) -> None:
-    system_model_id = await register_scope(
-        client, provider_ref, CredentialScope.SYSTEM, "system-rollback"
-    )
-    pool_view = add_pool(client, provider_ref, ProviderQuotaType.PAID, 1)
-    client.set_provider_preference(
-        tenant_id="tenant_001",
-        provider=provider_ref,
-        preferred_provider_type=ProviderType.SYSTEM,
-        identity=admin_identity(),
-    )
-    client.register_adapter(
-        FailingMockProviderAdapter(provider_descriptor, model_descriptors),
-        replace=True,
-    )
+    model_id = await register_tenant_model(client, provider_ref)
+    default_template(client, Decimal("1"))
 
-    with pytest.raises(ModelAccessException) as error:
-        await client.invoke(chat_request(system_model_id), identity=admin_identity())
-    assert error.value.code == ErrorCode.PROVIDER_UNAVAILABLE
+    class FailingAdapter(MockProviderAdapter):
+        async def invoke(self, invocation):  # type: ignore[no-untyped-def]
+            del invocation
+            raise ModelAccessException(
+                ErrorCode.PROVIDER_UNAVAILABLE, "planned failure", retryable=False
+            )
+
+    client.register_adapter(FailingAdapter(provider_descriptor, model_descriptors), replace=True)
+    request = chat_request(model_id)
+    with pytest.raises(ModelAccessException):
+        await client.invoke(request, identity=tenant_admin())
+
+    summary = client.get_user_quota(
+        tenant_id="tenant_001",
+        user_id="user_123",
+        roles=set(),
+        identity=tenant_admin(),
+    )
+    assert summary.credits_used == 0
+    assert summary.credits_reserved == 0
     with client.repository._sessions() as session:
-        pool = session.get(ProviderQuotaRecord, pool_view.quota_id)
-        reservation = session.scalar(select(QuotaReservationRecord))
-    assert pool is not None and pool.quota_used == 0 and pool.quota_reserved == 0
-    assert pool.is_valid is True
-    assert reservation is not None and reservation.status == "RELEASED"
+        reservation = session.get(UserQuotaReservationRecord, request.context.invocation_id)
+    assert reservation is not None
+    assert reservation.status == "RELEASED"
 
 
-def test_quota_update_preserves_usage_and_supports_admin_listing(client, provider_ref) -> None:
-    initial = client.configure_quota_pool(
-        ProviderQuotaPoolInput(
+def test_role_template_and_user_override(client) -> None:  # type: ignore[no-untyped-def]
+    role_template = client.configure_user_quota_template(
+        UserQuotaTemplateInput(
             tenant_id="tenant_001",
-            provider=provider_ref,
-            quota_type=ProviderQuotaType.PAID,
-            quota_unit=QuotaUnit.TIMES,
-            quota_limit=10,
-            quota_used=3,
-            restrict_models={"mock-chat"},
+            name="developer daily",
+            period_type=QuotaPeriodType.DAY,
+            credit_limit=Decimal("10"),
         ),
-        identity=admin_identity(),
+        identity=tenant_admin(),
     )
-    updated = client.configure_quota_pool(
-        ProviderQuotaPoolInput(
-            quota_id=initial.quota_id,
+    client.bind_quota_template_to_role(
+        RoleQuotaBindingInput(
             tenant_id="tenant_001",
-            provider=provider_ref,
-            quota_type=ProviderQuotaType.PAID,
-            quota_unit=QuotaUnit.TIMES,
-            quota_limit=20,
-            restrict_models={"mock-chat"},
+            role_code="developer",
+            template_id=role_template.template_id,
+            priority=10,
         ),
-        identity=admin_identity(),
+        identity=tenant_admin(),
     )
-
-    pools = client.list_quota_pools(
+    user = CallerIdentity(tenant_id="tenant_001", user_id="child_1", roles={"developer"})
+    summary = client.get_user_quota(
         tenant_id="tenant_001",
-        provider=provider_ref,
-        identity=admin_identity(),
+        user_id="child_1",
+        roles=user.roles,
+        identity=user,
     )
-    assert updated.quota_used == 3
-    assert updated.quota_remaining == 17
-    assert [item.quota_id for item in pools] == [initial.quota_id]
+    assert summary.source_type == QuotaPolicySource.ROLE
+    assert summary.period_type == QuotaPeriodType.DAY
+    assert summary.credit_limit == Decimal("10.000000")
+
+    client.assign_user_quota(
+        UserQuotaAssignmentInput(
+            tenant_id="tenant_001",
+            user_id="child_1",
+            override_mode=QuotaOverrideMode.UNLIMITED,
+        ),
+        identity=tenant_admin(),
+    )
+    overridden = client.get_user_quota(
+        tenant_id="tenant_001",
+        user_id="child_1",
+        roles=user.roles,
+        identity=user,
+    )
+    assert overridden.source_type == QuotaPolicySource.USER
+    assert overridden.status == UserQuotaStatus.UNLIMITED
+
+
+def test_only_tenant_admin_can_manage_quota(client) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ModelAccessException) as error:
+        client.configure_user_quota_template(
+            UserQuotaTemplateInput(tenant_id="tenant_001", name="forbidden"),
+            identity=CallerIdentity(tenant_id="tenant_001", user_id="user_123"),
+        )
+    assert error.value.code == ErrorCode.PERMISSION_DENIED

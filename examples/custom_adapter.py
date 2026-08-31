@@ -53,4 +53,3 @@ class CustomProviderAdapter:
         # Convert the standard operation/input to native HTTP or gRPC, then
         # normalize provider output/errors to the standard objects.
         raise NotImplementedError
-

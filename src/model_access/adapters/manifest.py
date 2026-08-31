@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,6 +16,14 @@ from ..contracts.entities import (
     ProviderRef,
 )
 from ..contracts.enums import ModelCategory, ModelOperation, ModelStatus, ModelType
+
+BUILTIN_PROVIDER_MANIFESTS = {
+    "aliyun_bailian": "aliyun-bailian.yaml",
+    "baidu_qianfan": "baidu-qianfan.yaml",
+    "deepseek": "deepseek.yaml",
+    "openai_compatible": "openai-compatible.yaml",
+    "volcengine_ark": "volcengine-ark.yaml",
+}
 
 
 class ManifestModel(StrictModel):
@@ -37,6 +46,7 @@ class ProviderManifest(StrictModel):
     protocol_version: str = "1.1"
     provider: ProviderRef
     display_name: I18nObject
+    default_base_url: str | None = Field(default=None, max_length=2048)
     supported_model_types: list[ModelType]
     capabilities: ProviderCapabilities = ProviderCapabilities()
     dynamic_model_discovery: bool = True
@@ -66,6 +76,7 @@ class ProviderManifest(StrictModel):
         descriptor = ProviderDescriptor(
             provider=self.provider,
             display_name=self.display_name,
+            default_base_url=self.default_base_url,
             supported_model_types=self.supported_model_types,
             capabilities=self.capabilities,
             dynamic_model_discovery=self.dynamic_model_discovery,
@@ -78,4 +89,15 @@ class ProviderManifest(StrictModel):
 def load_provider_manifest(path: str | Path) -> ProviderManifest:
     with Path(path).open("r", encoding="utf-8") as handle:
         payload = yaml.safe_load(handle)
+    return ProviderManifest.model_validate(payload)
+
+
+def load_builtin_provider_manifest(provider_id: str) -> ProviderManifest:
+    """Load an immutable provider manifest shipped inside the installed wheel."""
+    filename = BUILTIN_PROVIDER_MANIFESTS.get(provider_id)
+    if filename is None:
+        supported = ", ".join(sorted(BUILTIN_PROVIDER_MANIFESTS))
+        raise ValueError(f"unknown builtin provider: {provider_id}; supported: {supported}")
+    resource = files("model_access.provider_manifests").joinpath(filename)
+    payload = yaml.safe_load(resource.read_text(encoding="utf-8"))
     return ProviderManifest.model_validate(payload)

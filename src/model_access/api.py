@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Query, Request
@@ -13,7 +14,18 @@ from .client import ModelRepositoryClient
 from .contracts.common import PROTOCOL_VERSION, ensure_protocol_version
 from .contracts.entities import CallerIdentity
 from .contracts.enums import ErrorCode, ModelCategory, ModelStatus, ModelType
-from .contracts.invocation import ModelInvocationRequest, ModelListQuery, ModelRegistrationRequest
+from .contracts.invocation import (
+    ModelInvocationRequest,
+    ModelListQuery,
+    ModelRegistrationRequest,
+    TenantDefaultModelUpdateRequest,
+)
+from .contracts.quota import (
+    ModelCreditRateInput,
+    RoleQuotaBindingInput,
+    UserQuotaAssignmentInput,
+    UserQuotaTemplateInput,
+)
 from .contracts.responses import AsyncInvocationResult, ResponseEnvelope, StreamEvent
 from .errors import HTTP_STATUS_BY_ERROR, ModelAccessException
 
@@ -153,7 +165,154 @@ def create_router(
                 body.context.request_id or request.headers.get("x-request-id"),
             )
 
+    @router.get("/model-defaults")
+    async def get_default_models(
+        request: Request,
+        tenant_id: str,
+        identity: CallerIdentity = Depends(resolve_identity),
+        protocol_header: Annotated[str | None, Header(alias="X-Model-Protocol-Version")] = None,
+    ) -> JSONResponse:
+        try:
+            _validate_protocol_header(protocol_header, None)
+            result = await client.get_default_models(
+                tenant_id=tenant_id,
+                identity=identity,
+            )
+            envelope = ResponseEnvelope(
+                request_id=request.headers.get("x-request-id") or "req_model_defaults",
+                trace_id=client.observability.current_trace_id(),
+                data=result,
+            )
+            return JSONResponse(content=jsonable_encoder(envelope))
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.put("/model-defaults/{model_type}")
+    async def set_default_model(
+        model_type: ModelType,
+        body: TenantDefaultModelUpdateRequest,
+        request: Request,
+        identity: CallerIdentity = Depends(resolve_identity),
+        protocol_header: Annotated[str | None, Header(alias="X-Model-Protocol-Version")] = None,
+    ) -> JSONResponse:
+        try:
+            _validate_protocol_header(protocol_header, None)
+            result = await client.set_default_model(
+                body,
+                model_type=model_type,
+                identity=identity,
+            )
+            envelope = ResponseEnvelope(
+                request_id=request.headers.get("x-request-id") or "req_model_default_update",
+                trace_id=client.observability.current_trace_id(),
+                data=result,
+            )
+            return JSONResponse(content=jsonable_encoder(envelope))
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.put("/user-quotas/model-rates")
+    async def configure_model_credit_rate(
+        body: ModelCreditRateInput,
+        request: Request,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            result = client.configure_model_credit_rate(body, identity=identity)
+            return _data_response(result, request, "req_model_rate")
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.put("/user-quotas/templates")
+    async def configure_user_quota_template(
+        body: UserQuotaTemplateInput,
+        request: Request,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            result = client.configure_user_quota_template(body, identity=identity)
+            return _data_response(result, request, "req_quota_template")
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.put("/user-quotas/role-bindings", status_code=204)
+    async def bind_quota_template_to_role(
+        body: RoleQuotaBindingInput,
+        request: Request,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            client.bind_quota_template_to_role(body, identity=identity)
+            return JSONResponse(status_code=204, content=None)
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.put("/user-quotas/users", status_code=204)
+    async def assign_user_quota(
+        body: UserQuotaAssignmentInput,
+        request: Request,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            client.assign_user_quota(body, identity=identity)
+            return JSONResponse(status_code=204, content=None)
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.get("/user-quotas/users/{user_id}")
+    async def get_user_quota(
+        user_id: str,
+        tenant_id: str,
+        request: Request,
+        roles: str | None = None,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            result = client.get_user_quota(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                roles={item.strip() for item in (roles or "").split(",") if item.strip()},
+                identity=identity,
+            )
+            return _data_response(result, request, "req_user_quota")
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.get("/user-costs")
+    async def query_user_costs(
+        tenant_id: str,
+        request: Request,
+        user_id: str | None = None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            result = client.query_user_costs(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                start_at=start_at,
+                end_at=end_at,
+                limit=limit,
+                identity=identity,
+            )
+            return _data_response(result, request, "req_user_costs")
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
     return router
+
+
+def _data_response(data: Any, request: Request, fallback_request_id: str) -> JSONResponse:
+    return JSONResponse(
+        content=jsonable_encoder(
+            ResponseEnvelope(
+                request_id=request.headers.get("x-request-id") or fallback_request_id,
+                data=data,
+            )
+        )
+    )
 
 
 def create_app(

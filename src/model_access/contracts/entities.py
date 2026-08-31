@@ -123,6 +123,7 @@ class ModelDescriptor(StrictModel):
 class ProviderDescriptor(StrictModel):
     provider: ProviderRef
     display_name: I18nObject
+    default_base_url: str | None = Field(default=None, max_length=2048)
     icon_small: I18nObject | None = None
     icon_small_dark: I18nObject | None = None
     supported_model_types: list[ModelType]

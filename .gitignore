@@ -1,0 +1,26 @@
+# python缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 日志文件
+*.log
+
+# 环境密钥配置
+.env
+
+# IDE缓存
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# mac系统垃圾文件
+.DS_Store
+

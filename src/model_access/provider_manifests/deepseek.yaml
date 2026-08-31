@@ -1,0 +1,50 @@
+protocol_version: "1.1"
+provider:
+  plugin_id: builtin/deepseek
+  provider_id: deepseek
+display_name:
+  default: DeepSeek
+  zh_Hans: DeepSeek
+default_base_url: https://api.deepseek.com
+supported_model_types:
+  - text_generation
+capabilities:
+  supports_streaming: true
+  supports_tools: true
+  supports_vision: true
+  supports_json_schema: true
+  supports_system_message: true
+  supports_token_counting: true
+  supports_multimodal: true
+dynamic_model_discovery: true
+models:
+  - model: deepseek-v4-flash
+    label: DeepSeek V4 Flash
+    model_type: text_generation
+    input_modalities: [text]
+    output_modalities: [text]
+    categories: [TEXT_MODEL]
+    operations: [chat]
+    features: [streaming, tool_calling, json_schema, reasoning]
+    context_window: 1000000
+    max_output_tokens: 393216
+  - model: deepseek-v4-pro
+    label: DeepSeek V4 Pro
+    model_type: text_generation
+    input_modalities: [text]
+    output_modalities: [text]
+    categories: [TEXT_MODEL]
+    operations: [chat]
+    features: [streaming, tool_calling, json_schema, reasoning]
+    context_window: 1000000
+    max_output_tokens: 393216
+  - model: deepseek-v4-flash-vision-exp
+    label: DeepSeek V4 Flash Vision Experimental
+    model_type: text_generation
+    input_modalities: [text, image]
+    output_modalities: [text]
+    categories: [TEXT_MODEL, VISION_MODEL]
+    operations: [chat]
+    features: [streaming, tool_calling, json_schema, reasoning]
+    context_window: 1000000
+    max_output_tokens: 393216

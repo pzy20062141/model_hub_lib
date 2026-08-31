@@ -22,4 +22,3 @@ client.register_adapter(
 )
 
 app = create_app(client)
-

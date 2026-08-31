@@ -18,22 +18,30 @@ from .contracts.entities import (
 from .contracts.enums import (
     CredentialScope,
     CredentialSourceType,
+    CredentialStatus,
     ErrorCode,
     ModelStatus,
+    ModelType,
     ProviderType,
 )
-from .contracts.invocation import ManualModelRegistration, ModelListQuery, ModelRegistrationRequest
+from .contracts.invocation import (
+    ManualModelRegistration,
+    ModelListQuery,
+    ModelRegistrationRequest,
+    TenantDefaultModelUpdateRequest,
+)
 from .contracts.responses import (
     ConfiguredModelItem,
     CredentialSummary,
     ModelListResult,
     ProviderSummary,
     RegistrationResult,
+    TenantDefaultModelsResult,
 )
 from .errors import ModelAccessException
 from .observability import OpenTelemetryFacade
 from .persistence.repository import ModelAccessRepository
-from .protocols import CredentialCipher, QuotaAwareManager, QuotaManager
+from .protocols import CredentialCipher, QuotaManager, UserQuotaAwareManager
 from .security import URLSecurityPolicy, mask_secret
 
 
@@ -233,6 +241,15 @@ class ModelControlPlaneService:
                 paginate=False,
             )
             del next_offset
+            default_models = self._default_model_map(query.tenant_id)
+            user_quota = None
+            if isinstance(self._quota, UserQuotaAwareManager):
+                user_quota = self._quota.get_summary(
+                    tenant_id=query.tenant_id,
+                    user_id=query.user_id,
+                    roles=identity.roles if identity.user_id == query.user_id else set(),
+                    identity=identity,
+                )
             items: list[ConfiguredModelItem] = []
             for record in records:
                 provider_type = (
@@ -241,38 +258,8 @@ class ModelControlPlaneService:
                     else ProviderType.CUSTOM
                 )
                 status = ModelStatus(record.model.status)
-                preferred = provider_type
-                using: ProviderType | None = provider_type
-                effective = record
-                quota_type = None
-                quota_unit = None
-                quota_remaining = None
-                fallback_reason = None
-                if status == ModelStatus.ACTIVE and isinstance(self._quota, QuotaAwareManager):
-                    configuration = await self._quota.describe(
-                        requested=record,
-                        tenant_id=query.tenant_id,
-                        user_id=query.user_id,
-                    )
-                    status = configuration.status
-                    preferred = configuration.preferred_provider_type
-                    using = configuration.using_provider_type
-                    quota_type = configuration.selected_quota_type
-                    quota_unit = configuration.quota_unit
-                    quota_remaining = configuration.quota_remaining
-                    fallback_reason = configuration.fallback_reason
-                    if (
-                        configuration.selected_configured_model_id
-                        and configuration.selected_configured_model_id
-                        != record.model.configured_model_id
-                    ):
-                        selected = self._repository.resolve_model(
-                            configured_model_id=configuration.selected_configured_model_id,
-                            tenant_id=query.tenant_id,
-                            user_id=query.user_id,
-                        )
-                        if selected:
-                            effective = selected
+                if user_quota and user_quota.status.value in {"EXCEEDED", "DISABLED"}:
+                    status = ModelStatus.QUOTA_EXCEEDED
                 items.append(
                     ConfiguredModelItem(
                         configured_model_id=record.model.configured_model_id,
@@ -292,20 +279,19 @@ class ModelControlPlaneService:
                         context_window=record.model.context_window,
                         max_output_tokens=record.model.max_output_tokens,
                         credential=CredentialSummary(
-                            credential_id=effective.credential.credential_id,
-                            name=effective.credential.name,
-                            scope=effective.credential.scope,
-                            api_key_masked=effective.credential.api_key_masked,
+                            credential_id=record.credential.credential_id,
+                            name=record.credential.name,
+                            scope=record.credential.scope,
+                            api_key_masked=record.credential.api_key_masked,
                         ),
                         status=status,
                         provider_type=provider_type,
-                        preferred_provider_type=preferred,
-                        using_provider_type=using,
-                        effective_configured_model_id=effective.model.configured_model_id,
-                        quota_type=quota_type,
-                        quota_unit=quota_unit,
-                        quota_remaining=quota_remaining,
-                        fallback_reason=fallback_reason,
+                        user_quota_status=user_quota.status if user_quota else None,
+                        user_quota_remaining=(user_quota.credits_remaining if user_quota else None),
+                        is_default=(
+                            default_models.get(ModelType(record.model.model_type))
+                            == record.model.configured_model_id
+                        ),
                     )
                 )
             if query.status:
@@ -319,7 +305,84 @@ class ModelControlPlaneService:
                     if next_offset is not None
                     else None
                 ),
+                default_models=default_models,
+                user_quota=user_quota,
             )
+
+    async def set_default_model(
+        self,
+        request: TenantDefaultModelUpdateRequest,
+        *,
+        model_type: ModelType,
+        identity: CallerIdentity,
+    ) -> TenantDefaultModelsResult:
+        self._authorize_default_model_update(request.tenant_id, identity)
+        if request.configured_model_id:
+            resolved = self._repository.resolve_model(
+                configured_model_id=request.configured_model_id,
+                tenant_id=request.tenant_id,
+                user_id=None,
+            )
+            if resolved is None or resolved.credential.scope not in {
+                CredentialScope.TENANT.value,
+                CredentialScope.SYSTEM.value,
+            }:
+                raise ModelAccessException(
+                    ErrorCode.MODEL_NOT_FOUND,
+                    "tenant default must be selected from TENANT or SYSTEM configured models",
+                    field="configured_model_id",
+                )
+            if resolved.model.model_type != model_type.value:
+                raise ModelAccessException(
+                    ErrorCode.MODEL_TYPE_MISMATCH,
+                    "configured model type does not match the default model type",
+                    field="configured_model_id",
+                )
+            if resolved.model.status != ModelStatus.ACTIVE.value:
+                raise ModelAccessException(
+                    ErrorCode.MODEL_DISABLED,
+                    "disabled model cannot be selected as the default",
+                    field="configured_model_id",
+                )
+            if resolved.credential.status != CredentialStatus.VALID.value:
+                raise ModelAccessException(
+                    ErrorCode.CREDENTIAL_INVALID,
+                    "model credential is not valid",
+                    field="configured_model_id",
+                )
+        self._repository.set_tenant_default_model(
+            tenant_id=request.tenant_id,
+            model_type=model_type,
+            configured_model_id=request.configured_model_id,
+        )
+        return self._default_models_result(request.tenant_id)
+
+    async def get_default_models(
+        self,
+        *,
+        tenant_id: str,
+        identity: CallerIdentity,
+    ) -> TenantDefaultModelsResult:
+        self._authorize_tenant_access(tenant_id, identity)
+        return self._default_models_result(tenant_id)
+
+    def _default_model_map(
+        self,
+        tenant_id: str,
+    ) -> dict[ModelType, str | None]:
+        stored = self._repository.list_tenant_default_models(
+            tenant_id=tenant_id,
+        )
+        return {model_type: stored.get(model_type) for model_type in ModelType}
+
+    def _default_models_result(
+        self,
+        tenant_id: str,
+    ) -> TenantDefaultModelsResult:
+        return TenantDefaultModelsResult(
+            tenant_id=tenant_id,
+            defaults=self._default_model_map(tenant_id),
+        )
 
     async def _collect_models(self, request, credentials, adapter) -> list[ModelDescriptor]:  # type: ignore[no-untyped-def]
         descriptors: list[ModelDescriptor] = []
@@ -412,4 +475,24 @@ class ModelControlPlaneService:
         if not (identity.is_admin or identity.is_service) and identity.user_id != query.user_id:
             raise ModelAccessException(
                 ErrorCode.PERMISSION_DENIED, "cannot query another user's models"
+            )
+
+    @staticmethod
+    def _authorize_tenant_access(
+        tenant_id: str,
+        identity: CallerIdentity,
+    ) -> None:
+        if identity.tenant_id != tenant_id:
+            raise ModelAccessException(ErrorCode.PERMISSION_DENIED, "tenant identity mismatch")
+
+    @staticmethod
+    def _authorize_default_model_update(
+        tenant_id: str,
+        identity: CallerIdentity,
+    ) -> None:
+        ModelControlPlaneService._authorize_tenant_access(tenant_id, identity)
+        if "tenant_admin" not in identity.roles:
+            raise ModelAccessException(
+                ErrorCode.PERMISSION_DENIED,
+                "tenant administrator role is required to manage default models",
             )

@@ -14,6 +14,8 @@ from ..contracts.entities import CallerIdentity, ModelDescriptor, ProviderDescri
 from ..contracts.enums import (
     CredentialScope,
     CredentialStatus,
+    ModelStatus,
+    ModelType,
     ProviderQuotaType,
     ProviderType,
     QuotaReservationStatus,
@@ -34,6 +36,7 @@ from .models import (
     ProviderPreferenceRecord,
     ProviderQuotaRecord,
     QuotaReservationRecord,
+    TenantDefaultModelRecord,
 )
 
 
@@ -364,6 +367,73 @@ class ModelAccessRepository:
                 .order_by(ConfiguredModelRecord.created_at.desc())
             ).all()
             return [ResolvedModelRecord(model=row[0], credential=row[1]) for row in rows]
+
+    def set_tenant_default_model(
+        self,
+        *,
+        tenant_id: str,
+        model_type: ModelType,
+        configured_model_id: str | None,
+    ) -> None:
+        key = {
+            "tenant_id": tenant_id,
+            "model_type": model_type.value,
+        }
+        with self._sessions.begin() as session:
+            record = session.get(TenantDefaultModelRecord, key)
+            if configured_model_id is None:
+                if record is not None:
+                    session.delete(record)
+                return
+            if record is None:
+                session.add(
+                    TenantDefaultModelRecord(
+                        **key,
+                        configured_model_id=configured_model_id,
+                    )
+                )
+            else:
+                record.configured_model_id = configured_model_id
+
+    def list_tenant_default_models(
+        self,
+        *,
+        tenant_id: str,
+    ) -> dict[ModelType, str]:
+        with self._sessions() as session:
+            records = session.scalars(
+                select(TenantDefaultModelRecord)
+                .join(
+                    ConfiguredModelRecord,
+                    TenantDefaultModelRecord.configured_model_id
+                    == ConfiguredModelRecord.configured_model_id,
+                )
+                .join(
+                    ProviderCredentialRecord,
+                    ConfiguredModelRecord.credential_id == ProviderCredentialRecord.credential_id,
+                )
+                .where(
+                    TenantDefaultModelRecord.tenant_id == tenant_id,
+                    ConfiguredModelRecord.tenant_id == tenant_id,
+                    ConfiguredModelRecord.model_type == TenantDefaultModelRecord.model_type,
+                    ConfiguredModelRecord.status == ModelStatus.ACTIVE.value,
+                    ProviderCredentialRecord.status == CredentialStatus.VALID.value,
+                    ProviderCredentialRecord.scope.in_(
+                        [CredentialScope.TENANT.value, CredentialScope.SYSTEM.value]
+                    ),
+                )
+            ).all()
+            return {ModelType(record.model_type): record.configured_model_id for record in records}
+
+    def get_tenant_default_model(
+        self,
+        *,
+        tenant_id: str,
+        model_type: ModelType,
+    ) -> str | None:
+        return self.list_tenant_default_models(
+            tenant_id=tenant_id,
+        ).get(model_type)
 
     def get_source_version(self, source_key: str) -> int:
         with self._sessions() as session:

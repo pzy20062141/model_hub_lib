@@ -9,14 +9,15 @@
 | ProviderAdapterRuntime | `protocols.py`、`adapters/` | 标准请求转供应商协议、错误和响应归一化 |
 | 模型注册接口 | `control_plane.py`、`api.py` | 鉴权核对、URL 校验、凭据验证、加密、发现、幂等 |
 | 模型列表接口 | `control_plane.py`、`api.py` | 权限集合、分类/类型/供应商/状态过滤、脱敏返回 |
+| 租户默认模型 | `tenant_default_model`、`control_plane.py`、`runtime.py`、`contracts/invocation.py` | 按 tenant/type 保存、管理员写权限、子用户继承、列表标记、隐式默认解析和缺参原因告警 |
 | 统一调用接口 | `runtime.py`、`api.py` | blocking / streaming / async、operation 联合校验 |
 | 自部署模型 | `entities.py`、`routing.py` | 部署对象、多端点加权路由、失败冷却、稳定 Service URL |
 | 凭据安全 | `security.py` | Fernet 认证加密、Secret 脱敏、SSRF / 私网 URL 策略 |
 | 用量账本 | `model_invocation_usage`、`runtime.py` | invocation_id 幂等、session/query/app/model 归集 |
-| HostingConfiguration | `quota.py`、`config/hosting.example.yaml` | CLOUD 全局规格、restrict_models、租户首次访问懒初始化 |
-| 租户配额池 | `provider_quota`、`quota_reservation` | PAID → FREE → TRIAL、TIMES/TOKENS、原子预占、结算与失效 |
-| Provider 配置装配 | `ManagedQuotaManager.describe` | preferred/using 分离、SYSTEM → CUSTOM 降级、动态模型状态 |
-| 配置缓存失效 | `configuration_source_version`、`RedisConfigurationSourceCache` | 数据库版本化、Redis 加速、写后版本推进、Outbox 事件 |
+| 子用户策略装配 | `user_quota.py`、`user_quota_template`、`user_quota_assignment` | 用户覆盖 → 角色模板 → 租户默认 → 无限默认 |
+| 模型积分规则 | `model_credit_rate`、`UserQuotaManager._calculate` | 按次、输入/输出 Token、billable unit 统一换算，费率快照 |
+| 调用级额度 | `user_quota_period`、`user_quota_reservation` | tenant/user 隔离、日/月周期、原子预占、实际结算、失败释放 |
+| 子用户成本 | `user_cost_ledger`、`query_user_costs` | 按调用、用户、模型和 Usage 查询成本，Decimal 精度 |
 | OpenTelemetry | `observability.py` | GenAI 和 model_access 属性、CLIENT Span、低基数 Metric |
 | 数据库连接 | `persistence/database.py` | 逻辑数据库、凭据引用、本地/云配置、连接池 |
 | 生态兼容边界 | `adapters/openai_compatible.py` | OpenAI-compatible 仅存在于 Adapter，不污染核心契约 |
@@ -27,7 +28,7 @@
 - KMS / Vault：实现 `CredentialCipher` 或在其外层接入 envelope encryption。
 - BOS / S3：实现 `ArtifactStore`。
 - 任务执行引擎：实现 `TaskBackend`，承接视频、图片和语音异步状态。
-- 价格换算与财务账单：当前配额支持 TIMES/TOKENS；金额、币种和价格版本应由计费域消费用量账本计算。
+- 财务金额与发票：当前记录内部统一积分；货币、税率、发票和付款仍由财务域处理。
 - Outbox 发布 Worker：事务内已写入事件，宿主平台负责投递、重试和更新 `published_at`。
 - 模型训练或经验挖掘：消费 `model_invocation_usage` 与 OpenTelemetry 轨迹，不反向侵入模型调用协议。
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from enum import Enum
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -13,6 +15,76 @@ from .enums import (
     ModelType,
     ResponseMode,
 )
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_MODEL_FALLBACK_EVENT = "tenant_default_model_fallback"
+MODEL_OMITTED = "model_omitted"
+MODEL_NULL = "model_null"
+MODEL_EMPTY_OBJECT = "model_empty_object"
+
+
+def _field(container: Any, name: str) -> Any:
+    if isinstance(container, dict):
+        return container.get(name)
+    return getattr(container, name, None)
+
+
+def _safe_log_value(value: Any, *, max_length: int = 256) -> str | None:
+    """Return a bounded, single-line scalar suitable for diagnostic logs."""
+    if value is None:
+        return None
+    if isinstance(value, Enum):
+        value = value.value
+    if not isinstance(value, (str, int, float, bool)):
+        return None
+    return str(value).replace("\r", "\\r").replace("\n", "\\n")[:max_length]
+
+
+def _missing_model_reason(data: dict[str, Any]) -> str | None:
+    if "model" not in data:
+        return MODEL_OMITTED
+    if data["model"] is None:
+        return MODEL_NULL
+    if data["model"] == {}:
+        return MODEL_EMPTY_OBJECT
+    return None
+
+
+def _log_default_model_fallback(
+    data: dict[str, Any], operation: ModelOperation, reason: str
+) -> None:
+    context = data.get("context")
+    metadata = data.get("metadata")
+    fields = {
+        "model_access_event": DEFAULT_MODEL_FALLBACK_EVENT,
+        "model_fallback_reason": reason,
+        "operation": operation.value,
+        "tenant_id": _safe_log_value(_field(context, "tenant_id")),
+        "user_id": _safe_log_value(_field(context, "user_id")),
+        "app_id": _safe_log_value(_field(context, "app_id")),
+        "session_id": _safe_log_value(_field(context, "session_id")),
+        "query_id": _safe_log_value(_field(context, "query_id")),
+        "request_id": _safe_log_value(_field(context, "request_id")),
+        "invocation_id": _safe_log_value(_field(context, "invocation_id")),
+        "invocation_scene": _safe_log_value(_field(metadata, "scene")),
+    }
+    logger.warning(
+        "tenant default model fallback triggered: reason=%s operation=%s "
+        "tenant_id=%s user_id=%s app_id=%s session_id=%s query_id=%s "
+        "request_id=%s invocation_id=%s scene=%s",
+        fields["model_fallback_reason"],
+        fields["operation"],
+        fields["tenant_id"],
+        fields["user_id"],
+        fields["app_id"],
+        fields["session_id"],
+        fields["query_id"],
+        fields["request_id"],
+        fields["invocation_id"],
+        fields["invocation_scene"],
+        extra=fields,
+    )
 
 
 class TextContentPart(StrictModel):
@@ -217,24 +289,39 @@ class ModelListQuery(StrictModel):
     page_token: str | None = None
 
 
+class TenantDefaultModelUpdateRequest(StrictModel):
+    tenant_id: str
+    configured_model_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class ModelSelector(StrictModel):
     configured_model_id: str | None = None
     provider: ProviderRef | None = None
     model: str | None = None
     model_type: ModelType
+    use_default: bool = False
 
     @model_validator(mode="after")
     def validate_selector(self) -> ModelSelector:
+        if bool(self.provider) != bool(self.model):
+            raise ValueError("provider and model must be supplied together")
         explicit = bool(self.provider and self.model)
-        if bool(self.configured_model_id) == explicit:
-            raise ValueError("provide configured_model_id or provider + model, but not both")
+        selected_modes = sum([bool(self.configured_model_id), explicit, self.use_default])
+        if selected_modes > 1:
+            raise ValueError(
+                "provide at most one of configured_model_id, provider + model, or use_default"
+            )
         return self
+
+    @property
+    def uses_default(self) -> bool:
+        return self.use_default or not (self.configured_model_id or (self.provider and self.model))
 
 
 class ModelInvocationRequest(StrictModel):
     protocol_version: str = PROTOCOL_VERSION
     context: RuntimeContext
-    model: ModelSelector
+    model: ModelSelector | None = None
     operation: ModelOperation
     response_mode: ResponseMode = ResponseMode.BLOCKING
     input: InvocationInput
@@ -249,9 +336,14 @@ class ModelInvocationRequest(StrictModel):
         if not isinstance(data, dict):
             return data
         operation = ModelOperation(data.get("operation"))
+        missing_model_reason = _missing_model_reason(data)
+        if missing_model_reason:
+            _log_default_model_fallback(data, operation, missing_model_reason)
         input_model = INPUT_BY_OPERATION[operation]
         data = dict(data)
         data["input"] = input_model.model_validate(data.get("input", {}))
+        if missing_model_reason:
+            data["model"] = {"model_type": MODEL_TYPE_BY_OPERATION[operation]}
         return data
 
     @field_validator("protocol_version")
@@ -265,6 +357,9 @@ class ModelInvocationRequest(StrictModel):
         if not isinstance(self.input, expected_input):
             raise ValueError(f"operation {self.operation} requires {expected_input.__name__}")
         expected_model_type = MODEL_TYPE_BY_OPERATION[self.operation]
+        if self.model is None:
+            object.__setattr__(self, "model", ModelSelector(model_type=expected_model_type))
+        assert self.model is not None
         if self.model.model_type != expected_model_type:
             raise ValueError(
                 f"operation {self.operation} requires model_type {expected_model_type}, "

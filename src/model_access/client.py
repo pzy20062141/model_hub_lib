@@ -8,29 +8,40 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
 from .adapters.registry import ProviderRegistry
-from .contracts.entities import CallerIdentity, ProviderRef
-from .contracts.enums import ProviderType
+from .contracts.entities import CallerIdentity
+from .contracts.enums import ModelType
 from .contracts.invocation import (
     ModelInvocationRequest,
     ModelListQuery,
     ModelRegistrationRequest,
+    TenantDefaultModelUpdateRequest,
 )
-from .contracts.quota import ProviderQuotaPoolInput, ProviderQuotaView
+from .contracts.quota import (
+    ModelCreditRateInput,
+    ModelCreditRateView,
+    RoleQuotaBindingInput,
+    UserCostReport,
+    UserQuotaAssignmentInput,
+    UserQuotaSummary,
+    UserQuotaTemplateInput,
+    UserQuotaTemplateView,
+)
 from .contracts.responses import (
     AsyncInvocationResult,
     InvocationResult,
     ModelListResult,
     RegistrationResult,
     StreamEvent,
+    TenantDefaultModelsResult,
 )
 from .control_plane import ModelControlPlaneService
 from .infrastructure import InMemoryArtifactStore, InMemoryTaskBackend
 from .observability import OpenTelemetryFacade
 from .persistence.repository import ModelAccessRepository
 from .protocols import ArtifactStore, CredentialCipher, ProviderAdapter, QuotaManager, TaskBackend
-from .quota import ConfigurationSourceCache, HostingConfiguration, ManagedQuotaManager
 from .runtime import ModelRuntimeService
 from .security import FernetCredentialCipher, URLSecurityPolicy
+from .user_quota import UserQuotaManager
 
 
 class ModelRepositoryClient:
@@ -46,19 +57,13 @@ class ModelRepositoryClient:
         artifact_store: ArtifactStore | None = None,
         task_backend: TaskBackend | None = None,
         quota: QuotaManager | None = None,
-        hosting: HostingConfiguration | None = None,
-        configuration_cache: ConfigurationSourceCache | None = None,
         observability: OpenTelemetryFacade | None = None,
         max_attempts: int = 3,
     ):
         self.repository = repository
         self.providers = providers or ProviderRegistry()
         self.observability = observability or OpenTelemetryFacade()
-        self.quota = quota or ManagedQuotaManager(
-            repository,
-            hosting=hosting,
-            cache=configuration_cache,
-        )
+        self.quota = quota or UserQuotaManager(repository)
         self.control_plane = ModelControlPlaneService(
             repository=repository,
             providers=self.providers,
@@ -87,8 +92,6 @@ class ModelRepositoryClient:
         url_policy: URLSecurityPolicy | None = None,
         artifact_store: ArtifactStore | None = None,
         task_backend: TaskBackend | None = None,
-        hosting: HostingConfiguration | None = None,
-        configuration_cache: ConfigurationSourceCache | None = None,
     ) -> ModelRepositoryClient:
         if str(path) == ":memory:":
             engine = create_engine(
@@ -109,8 +112,6 @@ class ModelRepositoryClient:
             url_policy=url_policy,
             artifact_store=artifact_store,
             task_backend=task_backend,
-            hosting=hosting,
-            configuration_cache=configuration_cache,
         )
 
     def register_adapter(self, adapter: ProviderAdapter, *, replace: bool = False) -> None:
@@ -145,47 +146,91 @@ class ModelRepositoryClient:
     ) -> InvocationResult | AsyncInvocationResult | AsyncIterator[StreamEvent]:
         return await self.runtime.invoke(request, identity=identity)
 
-    def configure_quota_pool(
+    async def set_default_model(
         self,
-        config: ProviderQuotaPoolInput,
+        request: TenantDefaultModelUpdateRequest,
         *,
+        model_type: ModelType,
         identity: CallerIdentity,
-    ) -> ProviderQuotaView:
-        if not isinstance(self.quota, ManagedQuotaManager):
-            raise RuntimeError("the configured QuotaManager does not expose managed quota controls")
-        return self.quota.configure_pool(config, identity=identity)
+    ) -> TenantDefaultModelsResult:
+        return await self.control_plane.set_default_model(
+            request,
+            model_type=model_type,
+            identity=identity,
+        )
 
-    def set_provider_preference(
+    async def get_default_models(
         self,
         *,
         tenant_id: str,
-        provider: ProviderRef,
-        preferred_provider_type: ProviderType,
         identity: CallerIdentity,
+    ) -> TenantDefaultModelsResult:
+        return await self.control_plane.get_default_models(
+            tenant_id=tenant_id,
+            identity=identity,
+        )
+
+    def _user_quota(self) -> UserQuotaManager:
+        if not isinstance(self.quota, UserQuotaManager):
+            raise RuntimeError("the configured QuotaManager does not expose user quota controls")
+        return self.quota
+
+    def configure_model_credit_rate(
+        self, config: ModelCreditRateInput, *, identity: CallerIdentity
+    ) -> ModelCreditRateView:
+        return self._user_quota().configure_model_rate(config, identity=identity)
+
+    def configure_user_quota_template(
+        self, config: UserQuotaTemplateInput, *, identity: CallerIdentity
+    ) -> UserQuotaTemplateView:
+        return self._user_quota().configure_template(config, identity=identity)
+
+    def bind_quota_template_to_role(
+        self, config: RoleQuotaBindingInput, *, identity: CallerIdentity
     ) -> None:
-        if not isinstance(self.quota, ManagedQuotaManager):
-            raise RuntimeError("the configured QuotaManager does not expose provider preferences")
-        self.quota.set_preference(
-            tenant_id=tenant_id,
-            provider=provider,
-            preferred_provider_type=preferred_provider_type,
-            identity=identity,
-        )
+        self._user_quota().bind_role(config, identity=identity)
 
-    def list_quota_pools(
+    def assign_user_quota(
+        self, config: UserQuotaAssignmentInput, *, identity: CallerIdentity
+    ) -> None:
+        self._user_quota().assign_user(config, identity=identity)
+
+    def get_user_quota(
         self,
         *,
         tenant_id: str,
-        provider: ProviderRef,
+        user_id: str,
+        roles: set[str] | None,
         identity: CallerIdentity,
-    ) -> list[ProviderQuotaView]:
-        if not isinstance(self.quota, ManagedQuotaManager):
-            raise RuntimeError("the configured QuotaManager does not expose quota pools")
-        return self.quota.list_pools(
+    ) -> UserQuotaSummary:
+        return self._user_quota().get_summary(
             tenant_id=tenant_id,
-            provider=provider,
+            user_id=user_id,
+            roles=roles or set(),
             identity=identity,
         )
+
+    def query_user_costs(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str | None,
+        identity: CallerIdentity,
+        start_at=None,
+        end_at=None,
+        limit: int = 100,
+    ) -> UserCostReport:
+        return self._user_quota().query_costs(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            identity=identity,
+            start_at=start_at,
+            end_at=end_at,
+            limit=limit,
+        )
+
+    async def finalize_async_quota(self, *, invocation_id: str, usage, succeeded: bool) -> None:
+        await self.quota.settle(invocation_id=invocation_id, usage=usage, succeeded=succeeded)
 
     async def close(self) -> None:
         for descriptor in self.providers.list_providers():

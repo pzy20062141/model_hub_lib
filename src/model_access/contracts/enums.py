@@ -58,6 +58,32 @@ class QuotaReservationStatus(StrEnum):
     RELEASED = "RELEASED"
 
 
+class QuotaPeriodType(StrEnum):
+    DAY = "DAY"
+    MONTH = "MONTH"
+
+
+class QuotaOverrideMode(StrEnum):
+    INHERIT = "INHERIT"
+    LIMITED = "LIMITED"
+    UNLIMITED = "UNLIMITED"
+
+
+class QuotaPolicySource(StrEnum):
+    USER = "USER"
+    ROLE = "ROLE"
+    TENANT_DEFAULT = "TENANT_DEFAULT"
+    PLATFORM_DEFAULT = "PLATFORM_DEFAULT"
+
+
+class UserQuotaStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    SOFT_LIMIT = "SOFT_LIMIT"
+    EXCEEDED = "EXCEEDED"
+    DISABLED = "DISABLED"
+    UNLIMITED = "UNLIMITED"
+
+
 class CredentialScope(StrEnum):
     USER = "USER"
     TENANT = "TENANT"
