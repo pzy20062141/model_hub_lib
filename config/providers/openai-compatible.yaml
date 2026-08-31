@@ -1,0 +1,46 @@
+protocol_version: "1.1"
+provider:
+  plugin_id: builtin/openai-compatible
+  provider_id: openai_compatible
+display_name:
+  default: OpenAI Compatible
+  zh_Hans: OpenAI 兼容服务
+supported_model_types:
+  - text_generation
+  - embedding
+  - speech_to_text
+  - text_to_speech
+  - image_generation
+  - moderation
+capabilities:
+  supports_streaming: true
+  supports_tools: true
+  supports_vision: true
+  supports_json_schema: true
+  supports_system_message: true
+  supports_token_counting: true
+  supports_multimodal: true
+dynamic_model_discovery: true
+models:
+  - model: replace-with-chat-model
+    label: Chat Model
+    model_type: text_generation
+    input_modalities: [text, image]
+    output_modalities: [text]
+    categories: [TEXT_MODEL, VISION_MODEL]
+    operations: [chat, text_completion]
+    features: [streaming, tool_calling, json_schema]
+    context_window: 128000
+  - model: replace-with-embedding-model
+    label: Embedding Model
+    model_type: embedding
+    input_modalities: [text]
+    output_modalities: [vector]
+    operations: [embeddings]
+  - model: replace-with-image-model
+    label: Image Model
+    model_type: image_generation
+    input_modalities: [text, image]
+    output_modalities: [image]
+    operations: [image_generate]
+

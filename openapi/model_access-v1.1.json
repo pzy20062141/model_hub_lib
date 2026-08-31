@@ -1,0 +1,1905 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Model Access API",
+    "version": "1.1"
+  },
+  "paths": {
+    "/api/v1/model-registrations": {
+      "post": {
+        "tags": [
+          "model-access"
+        ],
+        "summary": "Register Model",
+        "operationId": "register_model_api_v1_model_registrations_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "X-Model-Protocol-Version",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Model-Protocol-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelRegistrationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/models": {
+      "get": {
+        "tags": [
+          "model-access"
+        ],
+        "summary": "List Models",
+        "operationId": "list_models_api_v1_models_get",
+        "parameters": [
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tenant Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ModelCategory"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "name": "model_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ModelType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model Type"
+            }
+          },
+          {
+            "name": "provider_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ModelStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "ACTIVE",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "page_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page Token"
+            }
+          },
+          {
+            "name": "X-Model-Protocol-Version",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Model-Protocol-Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/model-invocations": {
+      "post": {
+        "tags": [
+          "model-access"
+        ],
+        "summary": "Invoke Model",
+        "operationId": "invoke_model_api_v1_model_invocations_post",
+        "parameters": [
+          {
+            "name": "X-Model-Protocol-Version",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Model-Protocol-Version"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelInvocationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Invoke Model Api V1 Model Invocations Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AudioContentPart": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "audio",
+            "title": "Type"
+          },
+          "file_id": {
+            "type": "string",
+            "title": "File Id"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "file_id"
+        ],
+        "title": "AudioContentPart"
+      },
+      "AuthType": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "API_KEY",
+          "BEARER",
+          "MTLS"
+        ],
+        "title": "AuthType"
+      },
+      "ChatInput": {
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/PromptMessage"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Messages"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolDefinition"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tools"
+          },
+          "tool_choice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Choice"
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "title": "ChatInput"
+      },
+      "CompletionInput": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "CompletionInput"
+      },
+      "CredentialInput": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "base_url": {
+            "type": "string",
+            "title": "Base Url"
+          },
+          "api_key": {
+            "type": "string",
+            "format": "password",
+            "title": "Api Key",
+            "writeOnly": true
+          },
+          "scope": {
+            "$ref": "#/components/schemas/CredentialScope"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "base_url",
+          "api_key",
+          "scope"
+        ],
+        "title": "CredentialInput"
+      },
+      "CredentialScope": {
+        "type": "string",
+        "enum": [
+          "USER",
+          "TENANT",
+          "SYSTEM"
+        ],
+        "title": "CredentialScope"
+      },
+      "DeploymentMode": {
+        "type": "string",
+        "enum": [
+          "LOCAL_ENDPOINT",
+          "PRIVATE_CLOUD",
+          "KUBERNETES_SERVICE"
+        ],
+        "title": "DeploymentMode"
+      },
+      "DeploymentProtocol": {
+        "type": "string",
+        "enum": [
+          "OPENAI_COMPATIBLE",
+          "NATIVE_HTTP",
+          "GRPC"
+        ],
+        "title": "DeploymentProtocol"
+      },
+      "DiscoveryMode": {
+        "type": "string",
+        "enum": [
+          "MANUAL",
+          "ENDPOINT",
+          "MANIFEST"
+        ],
+        "title": "DiscoveryMode"
+      },
+      "EmbeddingInput": {
+        "properties": {
+          "texts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 2048,
+            "minItems": 1,
+            "title": "Texts"
+          },
+          "input_type": {
+            "type": "string",
+            "enum": [
+              "document",
+              "query"
+            ],
+            "title": "Input Type",
+            "default": "document"
+          },
+          "dimensions": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dimensions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "texts"
+        ],
+        "title": "EmbeddingInput"
+      },
+      "ExecutionContext": {
+        "properties": {
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          },
+          "workflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Run Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ExecutionContext"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImageContentPart": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "image",
+            "title": "Type"
+          },
+          "file_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Id"
+          },
+          "uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uri"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "low",
+                  "high"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "ImageContentPart"
+      },
+      "ImageGenerationInput": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "negative_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Negative Prompt"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "count": {
+            "type": "integer",
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "default": 1
+          },
+          "reference_file_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reference File Ids",
+            "default": []
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "ImageGenerationInput"
+      },
+      "ManualModelRegistration": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "model_type": {
+            "$ref": "#/components/schemas/ModelType"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "input_modalities": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "text",
+                "image",
+                "audio",
+                "video"
+              ]
+            },
+            "type": "array",
+            "uniqueItems": true,
+            "title": "Input Modalities",
+            "default": [
+              "text"
+            ]
+          },
+          "output_modalities": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "text",
+                "json",
+                "vector",
+                "image",
+                "audio",
+                "video"
+              ]
+            },
+            "type": "array",
+            "uniqueItems": true,
+            "title": "Output Modalities",
+            "default": [
+              "text"
+            ]
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/ModelOperation"
+            },
+            "type": "array",
+            "uniqueItems": true,
+            "title": "Operations",
+            "default": []
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true,
+            "title": "Features",
+            "default": []
+          },
+          "categories": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCategory"
+            },
+            "type": "array",
+            "uniqueItems": true,
+            "title": "Categories",
+            "default": []
+          },
+          "context_window": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Window"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model",
+          "model_type"
+        ],
+        "title": "ManualModelRegistration"
+      },
+      "ModelCategory": {
+        "type": "string",
+        "enum": [
+          "TEXT_MODEL",
+          "VECTOR_MODEL",
+          "VISION_MODEL",
+          "SPEECH_MODEL",
+          "IMAGE_GENERATION_MODEL",
+          "VIDEO_GENERATION_MODEL",
+          "SAFETY_MODEL"
+        ],
+        "title": "ModelCategory"
+      },
+      "ModelInvocationRequest": {
+        "properties": {
+          "protocol_version": {
+            "type": "string",
+            "title": "Protocol Version",
+            "default": "1.1"
+          },
+          "context": {
+            "$ref": "#/components/schemas/RuntimeContext"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelSelector"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/ModelOperation"
+          },
+          "response_mode": {
+            "$ref": "#/components/schemas/ResponseMode",
+            "default": "blocking"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatInput"
+              },
+              {
+                "$ref": "#/components/schemas/CompletionInput"
+              },
+              {
+                "$ref": "#/components/schemas/EmbeddingInput"
+              },
+              {
+                "$ref": "#/components/schemas/RerankInput"
+              },
+              {
+                "$ref": "#/components/schemas/TranscriptionInput"
+              },
+              {
+                "$ref": "#/components/schemas/SynthesisInput"
+              },
+              {
+                "$ref": "#/components/schemas/ImageGenerationInput"
+              },
+              {
+                "$ref": "#/components/schemas/VideoGenerationInput"
+              },
+              {
+                "$ref": "#/components/schemas/ModerationInput"
+              }
+            ],
+            "title": "Input"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters",
+            "default": {}
+          },
+          "provider_options": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Provider Options",
+            "default": {}
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/RequestMetadata",
+            "default": {
+              "response_mode": "blocking",
+              "tags": {}
+            }
+          },
+          "extensions": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Extensions",
+            "default": {}
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "context",
+          "model",
+          "operation",
+          "input"
+        ],
+        "title": "ModelInvocationRequest"
+      },
+      "ModelOperation": {
+        "type": "string",
+        "enum": [
+          "chat",
+          "text_completion",
+          "embeddings",
+          "rerank",
+          "transcribe",
+          "synthesize",
+          "image_generate",
+          "video_generate",
+          "moderate"
+        ],
+        "title": "ModelOperation"
+      },
+      "ModelRegistrationOptions": {
+        "properties": {
+          "validate_credentials": {
+            "type": "boolean",
+            "title": "Validate Credentials",
+            "default": true
+          },
+          "discover_models": {
+            "type": "boolean",
+            "title": "Discover Models",
+            "default": true
+          },
+          "enable_discovered_models": {
+            "type": "boolean",
+            "title": "Enable Discovered Models",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ModelRegistrationOptions"
+      },
+      "ModelRegistrationRequest": {
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "title": "Tenant Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ProviderRef"
+          },
+          "credential": {
+            "$ref": "#/components/schemas/CredentialInput"
+          },
+          "deployment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SelfHostedDeployment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManualModelRegistration"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "options": {
+            "$ref": "#/components/schemas/ModelRegistrationOptions",
+            "default": {
+              "validate_credentials": true,
+              "discover_models": true,
+              "enable_discovered_models": true
+            }
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "user_id",
+          "provider",
+          "credential"
+        ],
+        "title": "ModelRegistrationRequest"
+      },
+      "ModelSelector": {
+        "properties": {
+          "configured_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured Model Id"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "model_type": {
+            "$ref": "#/components/schemas/ModelType"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model_type"
+        ],
+        "title": "ModelSelector"
+      },
+      "ModelStatus": {
+        "type": "string",
+        "enum": [
+          "ACTIVE",
+          "DISABLED",
+          "INVALID_CREDENTIAL",
+          "UNAVAILABLE",
+          "WARMING_UP",
+          "QUOTA_EXCEEDED",
+          "NO_CONFIGURE"
+        ],
+        "title": "ModelStatus"
+      },
+      "ModelType": {
+        "type": "string",
+        "enum": [
+          "text_generation",
+          "embedding",
+          "rerank",
+          "speech_to_text",
+          "text_to_speech",
+          "image_generation",
+          "video_generation",
+          "moderation"
+        ],
+        "title": "ModelType"
+      },
+      "ModerationInput": {
+        "properties": {
+          "input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Input"
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "input"
+        ],
+        "title": "ModerationInput"
+      },
+      "PromptMessage": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TextContentPart"
+                },
+                {
+                  "$ref": "#/components/schemas/ImageContentPart"
+                },
+                {
+                  "$ref": "#/components/schemas/AudioContentPart"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "audio": "#/components/schemas/AudioContentPart",
+                  "image": "#/components/schemas/ImageContentPart",
+                  "text": "#/components/schemas/TextContentPart"
+                }
+              }
+            },
+            "type": "array",
+            "title": "Content"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "tool_call_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Call Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "PromptMessage"
+      },
+      "ProviderRef": {
+        "properties": {
+          "plugin_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Plugin Id"
+          },
+          "provider_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Provider Id"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "plugin_id",
+          "provider_id"
+        ],
+        "title": "ProviderRef"
+      },
+      "RequestMetadata": {
+        "properties": {
+          "scene": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scene"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
+          "response_mode": {
+            "$ref": "#/components/schemas/ResponseMode",
+            "default": "blocking"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "tags": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Tags",
+            "default": {}
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RequestMetadata"
+      },
+      "RerankInput": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "documents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 4096,
+            "minItems": 1,
+            "title": "Documents"
+          },
+          "top_n": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top N"
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "query",
+          "documents"
+        ],
+        "title": "RerankInput"
+      },
+      "ResponseMode": {
+        "type": "string",
+        "enum": [
+          "blocking",
+          "streaming",
+          "async"
+        ],
+        "title": "ResponseMode"
+      },
+      "RuntimeContext": {
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Tenant Id"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "query_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Id"
+          },
+          "parent_query_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Query Id"
+          },
+          "app_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "App Id"
+          },
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExecutionContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "invocation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invocation Id"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "traceparent": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Traceparent"
+          },
+          "tracestate": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracestate"
+          },
+          "extensions": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Extensions",
+            "default": {}
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tenant_id"
+        ],
+        "title": "RuntimeContext"
+      },
+      "SelfHostedDeployment": {
+        "properties": {
+          "deployment_mode": {
+            "$ref": "#/components/schemas/DeploymentMode"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/DeploymentProtocol"
+          },
+          "endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/SelfHostedEndpoint"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Endpoints"
+          },
+          "model_name": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Model Name"
+          },
+          "auth_type": {
+            "$ref": "#/components/schemas/AuthType",
+            "default": "NONE"
+          },
+          "credential_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Id"
+          },
+          "tls_verify": {
+            "type": "boolean",
+            "title": "Tls Verify",
+            "default": true
+          },
+          "ca_cert_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ca Cert Ref"
+          },
+          "discovery_mode": {
+            "$ref": "#/components/schemas/DiscoveryMode",
+            "default": "MANUAL"
+          },
+          "health_check": {
+            "$ref": "#/components/schemas/SelfHostedHealthCheck",
+            "default": {
+              "path": "/health",
+              "method": "GET",
+              "interval_seconds": 15,
+              "timeout_ms": 2000,
+              "unhealthy_threshold": 3,
+              "healthy_threshold": 2
+            }
+          },
+          "connect_timeout_ms": {
+            "type": "integer",
+            "maximum": 60000.0,
+            "minimum": 100.0,
+            "title": "Connect Timeout Ms",
+            "default": 3000
+          },
+          "request_timeout_ms": {
+            "type": "integer",
+            "maximum": 3600000.0,
+            "minimum": 1000.0,
+            "title": "Request Timeout Ms",
+            "default": 120000
+          },
+          "max_concurrency": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Concurrency"
+          },
+          "deployment_version": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Deployment Version",
+            "default": 1
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "extensions": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Extensions",
+            "default": {}
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "deployment_mode",
+          "protocol",
+          "endpoints",
+          "model_name"
+        ],
+        "title": "SelfHostedDeployment"
+      },
+      "SelfHostedEndpoint": {
+        "properties": {
+          "endpoint_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Endpoint Id"
+          },
+          "base_url": {
+            "type": "string",
+            "title": "Base Url"
+          },
+          "weight": {
+            "type": "integer",
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Weight",
+            "default": 100
+          },
+          "zone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zone"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "endpoint_id",
+          "base_url"
+        ],
+        "title": "SelfHostedEndpoint"
+      },
+      "SelfHostedHealthCheck": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "default": "/health"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "grpc_health"
+            ],
+            "title": "Method",
+            "default": "GET"
+          },
+          "interval_seconds": {
+            "type": "integer",
+            "maximum": 3600.0,
+            "minimum": 1.0,
+            "title": "Interval Seconds",
+            "default": 15
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "maximum": 60000.0,
+            "minimum": 100.0,
+            "title": "Timeout Ms",
+            "default": 2000
+          },
+          "unhealthy_threshold": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Unhealthy Threshold",
+            "default": 3
+          },
+          "healthy_threshold": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Healthy Threshold",
+            "default": 2
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SelfHostedHealthCheck"
+      },
+      "SynthesisInput": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "voice": {
+            "type": "string",
+            "title": "Voice",
+            "default": ""
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "default": "mp3"
+          },
+          "speed": {
+            "type": "number",
+            "maximum": 4.0,
+            "minimum": 0.25,
+            "title": "Speed",
+            "default": 1.0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "SynthesisInput"
+      },
+      "TextContentPart": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "TextContentPart"
+      },
+      "ToolDefinition": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "parameters"
+        ],
+        "title": "ToolDefinition"
+      },
+      "TranscriptionInput": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "title": "File Id"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "timestamps": {
+            "type": "boolean",
+            "title": "Timestamps",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "title": "TranscriptionInput"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VideoGenerationInput": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "image_file_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image File Id"
+          },
+          "reference_file_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reference File Ids",
+            "default": []
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 3600.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "VideoGenerationInput"
+      }
+    }
+  }
+}

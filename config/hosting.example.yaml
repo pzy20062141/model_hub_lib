@@ -1,0 +1,28 @@
+edition: CLOUD
+
+quotas:
+  - provider:
+      plugin_id: builtin/openai
+      provider_id: openai
+    quota_type: TRIAL
+    quota_unit: TOKENS
+    quota_limit: 100000
+    restrict_models:
+      - gpt-4.1-mini
+
+  - provider:
+      plugin_id: builtin/openai
+      provider_id: openai
+    quota_type: FREE
+    quota_unit: TIMES
+    quota_limit: 1000
+    restrict_models:
+      - dall-e-3
+
+  - provider:
+      plugin_id: builtin/anthropic
+      provider_id: anthropic
+    quota_type: TRIAL
+    quota_unit: TIMES
+    quota_limit: 200
+    restrict_models: []

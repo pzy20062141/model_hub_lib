@@ -1,0 +1,415 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import UTC, datetime
+from uuid import uuid4
+
+from opentelemetry import trace
+
+from .adapters.registry import ProviderRegistry
+from .contracts.entities import (
+    CallerIdentity,
+    CredentialSet,
+    ModelDescriptor,
+    ProviderRef,
+    RuntimeContext,
+)
+from .contracts.enums import (
+    CredentialScope,
+    CredentialSourceType,
+    ErrorCode,
+    ModelStatus,
+    ProviderType,
+)
+from .contracts.invocation import ManualModelRegistration, ModelListQuery, ModelRegistrationRequest
+from .contracts.responses import (
+    ConfiguredModelItem,
+    CredentialSummary,
+    ModelListResult,
+    ProviderSummary,
+    RegistrationResult,
+)
+from .errors import ModelAccessException
+from .observability import OpenTelemetryFacade
+from .persistence.repository import ModelAccessRepository
+from .protocols import CredentialCipher, QuotaAwareManager, QuotaManager
+from .security import URLSecurityPolicy, mask_secret
+
+
+def new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid4().hex}"
+
+
+class ModelControlPlaneService:
+    def __init__(
+        self,
+        *,
+        repository: ModelAccessRepository,
+        providers: ProviderRegistry,
+        cipher: CredentialCipher,
+        url_policy: URLSecurityPolicy,
+        observability: OpenTelemetryFacade,
+        quota: QuotaManager,
+    ):
+        self._repository = repository
+        self._providers = providers
+        self._cipher = cipher
+        self._url_policy = url_policy
+        self._observability = observability
+        self._quota = quota
+
+    async def register_model(
+        self,
+        request: ModelRegistrationRequest,
+        *,
+        identity: CallerIdentity,
+        idempotency_key: str,
+    ) -> RegistrationResult:
+        self._authorize_registration(request, identity)
+        if not idempotency_key or len(idempotency_key) > 256:
+            raise ModelAccessException(
+                ErrorCode.REQUEST_INVALID,
+                "Idempotency-Key is required and must not exceed 256 characters",
+                field="Idempotency-Key",
+            )
+        request_hash = self._request_hash(request)
+        replay = self._repository.get_idempotency(
+            request.tenant_id,
+            request.user_id,
+            idempotency_key,
+        )
+        if replay:
+            if replay.request_hash != request_hash:
+                raise ModelAccessException(
+                    ErrorCode.IDEMPOTENCY_CONFLICT,
+                    "Idempotency-Key is already bound to a different request",
+                )
+            return replay.result
+
+        request_id = new_id("req")
+        trace_id = self._observability.current_trace_id()
+        with self._observability.start_span(
+            "model.registration",
+            {
+                "model_access.tenant.id": request.tenant_id,
+                "gen_ai.provider.name": request.provider.provider_id,
+                "model_access.scope": request.credential.scope.value,
+            },
+        ) as registration_span:
+            span_context = registration_span.span.get_span_context()
+            if span_context.is_valid:
+                trace_id = trace.format_trace_id(span_context.trace_id)
+            adapter = self._providers.get(request.provider)
+            base_url = self._url_policy.validate(request.credential.base_url)
+            if request.deployment:
+                for endpoint in request.deployment.endpoints:
+                    self._url_policy.validate(endpoint.base_url)
+
+            credential_values = {
+                "base_url": base_url,
+                "api_key": request.credential.api_key.get_secret_value(),
+            }
+            credentials = CredentialSet(
+                provider=request.provider,
+                values=credential_values,
+                source=(
+                    CredentialSourceType.SELF_HOSTED
+                    if request.deployment
+                    else (
+                        CredentialSourceType.SYSTEM
+                        if request.credential.scope == CredentialScope.SYSTEM
+                        else (
+                            CredentialSourceType.USER
+                            if request.credential.scope == CredentialScope.USER
+                            else CredentialSourceType.TENANT
+                        )
+                    )
+                ),
+            )
+            if request.options.validate_credentials:
+                validation = await adapter.validate_credentials(
+                    context=RuntimeContext(
+                        tenant_id=request.tenant_id,
+                        user_id=request.user_id,
+                        request_id=request_id,
+                    ),
+                    provider=request.provider,
+                    credentials=credentials,
+                )
+                if not validation.valid:
+                    raise ModelAccessException(
+                        ErrorCode.CREDENTIAL_INVALID,
+                        validation.message or "provider credential validation failed",
+                        provider=request.provider.key,
+                        provider_error_code=validation.error_code,
+                    )
+                if validation.normalized_credentials:
+                    credential_values.update(validation.normalized_credentials)
+                    credential_values["base_url"] = base_url
+
+            descriptors = await self._collect_models(request, credentials, adapter)
+            enabled = request.options.enable_discovered_models
+            if not enabled:
+                descriptors = [
+                    item.model_copy(update={"status": ModelStatus.DISABLED}) for item in descriptors
+                ]
+            descriptors = self._deduplicate(descriptors)
+
+            credential_id = new_id("cred")
+            registration_id = new_id("reg")
+            configured = [(new_id("cm"), descriptor) for descriptor in descriptors]
+            result = RegistrationResult(
+                registration_id=registration_id,
+                credential_id=credential_id,
+                credential_name=request.credential.name,
+                provider_id=request.provider.provider_id,
+                base_url=base_url,
+                api_key_masked=mask_secret(credential_values.get("api_key", "")),
+                scope=request.credential.scope,
+                validation_status="VALID",
+                discovered_model_count=len(descriptors),
+                configured_model_ids=[item[0] for item in configured],
+                created_at=datetime.now(UTC),
+            )
+            try:
+                self._repository.save_registration(
+                    credential_id=credential_id,
+                    registration_id=registration_id,
+                    tenant_id=request.tenant_id,
+                    owner_user_id=request.user_id,
+                    provider=adapter.descriptor,
+                    credential_name=request.credential.name,
+                    base_url=base_url,
+                    encrypted_values=self._cipher.encrypt(credential_values),
+                    api_key_masked=result.api_key_masked,
+                    scope=request.credential.scope,
+                    deployment=request.deployment.model_dump(mode="json")
+                    if request.deployment
+                    else None,
+                    models=configured,
+                    source="SELF_HOSTED" if request.deployment else "PROVIDER",
+                    request_hash=request_hash,
+                    idempotency_key=idempotency_key,
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    result=result,
+                )
+            except Exception:
+                replay = self._repository.get_idempotency(
+                    request.tenant_id,
+                    request.user_id,
+                    idempotency_key,
+                )
+                if replay and replay.request_hash == request_hash:
+                    return replay.result
+                raise
+            return result
+
+    async def list_models(
+        self,
+        query: ModelListQuery,
+        *,
+        identity: CallerIdentity,
+    ) -> ModelListResult:
+        self._authorize_list(query, identity)
+        try:
+            offset = self._repository.decode_page_token(query.page_token)
+        except ValueError as exc:
+            raise ModelAccessException(
+                ErrorCode.REQUEST_INVALID, str(exc), field="page_token"
+            ) from exc
+        with self._observability.start_span(
+            "model.catalog.list",
+            {
+                "model_access.tenant.id": query.tenant_id,
+                "model_access.catalog.page_size": query.page_size,
+            },
+        ):
+            records, next_offset = self._repository.list_models(
+                query=query,
+                identity=identity,
+                offset=offset,
+                paginate=False,
+            )
+            del next_offset
+            items: list[ConfiguredModelItem] = []
+            for record in records:
+                provider_type = (
+                    ProviderType.SYSTEM
+                    if record.credential.scope == CredentialScope.SYSTEM.value
+                    else ProviderType.CUSTOM
+                )
+                status = ModelStatus(record.model.status)
+                preferred = provider_type
+                using: ProviderType | None = provider_type
+                effective = record
+                quota_type = None
+                quota_unit = None
+                quota_remaining = None
+                fallback_reason = None
+                if status == ModelStatus.ACTIVE and isinstance(self._quota, QuotaAwareManager):
+                    configuration = await self._quota.describe(
+                        requested=record,
+                        tenant_id=query.tenant_id,
+                        user_id=query.user_id,
+                    )
+                    status = configuration.status
+                    preferred = configuration.preferred_provider_type
+                    using = configuration.using_provider_type
+                    quota_type = configuration.selected_quota_type
+                    quota_unit = configuration.quota_unit
+                    quota_remaining = configuration.quota_remaining
+                    fallback_reason = configuration.fallback_reason
+                    if (
+                        configuration.selected_configured_model_id
+                        and configuration.selected_configured_model_id
+                        != record.model.configured_model_id
+                    ):
+                        selected = self._repository.resolve_model(
+                            configured_model_id=configuration.selected_configured_model_id,
+                            tenant_id=query.tenant_id,
+                            user_id=query.user_id,
+                        )
+                        if selected:
+                            effective = selected
+                items.append(
+                    ConfiguredModelItem(
+                        configured_model_id=record.model.configured_model_id,
+                        provider=ProviderSummary(
+                            plugin_id=record.model.plugin_id,
+                            provider_id=record.model.provider_id,
+                            display_name=record.model.provider_display_name,
+                        ),
+                        model=record.model.model,
+                        label=record.model.label,
+                        model_type=record.model.model_type,
+                        categories=set(record.model.categories),
+                        input_modalities=set(record.model.input_modalities),
+                        output_modalities=set(record.model.output_modalities),
+                        features=set(record.model.features),
+                        operations=set(record.model.operations),
+                        context_window=record.model.context_window,
+                        max_output_tokens=record.model.max_output_tokens,
+                        credential=CredentialSummary(
+                            credential_id=effective.credential.credential_id,
+                            name=effective.credential.name,
+                            scope=effective.credential.scope,
+                            api_key_masked=effective.credential.api_key_masked,
+                        ),
+                        status=status,
+                        provider_type=provider_type,
+                        preferred_provider_type=preferred,
+                        using_provider_type=using,
+                        effective_configured_model_id=effective.model.configured_model_id,
+                        quota_type=quota_type,
+                        quota_unit=quota_unit,
+                        quota_remaining=quota_remaining,
+                        fallback_reason=fallback_reason,
+                    )
+                )
+            if query.status:
+                items = [item for item in items if item.status == query.status]
+            page = items[offset : offset + query.page_size + 1]
+            next_offset = offset + query.page_size if len(page) > query.page_size else None
+            return ModelListResult(
+                items=page[: query.page_size],
+                next_page_token=(
+                    self._repository.encode_page_token(next_offset)
+                    if next_offset is not None
+                    else None
+                ),
+            )
+
+    async def _collect_models(self, request, credentials, adapter) -> list[ModelDescriptor]:  # type: ignore[no-untyped-def]
+        descriptors: list[ModelDescriptor] = []
+        if request.options.discover_models:
+            discovered = await adapter.discover_models(
+                context=RuntimeContext(
+                    tenant_id=request.tenant_id,
+                    user_id=request.user_id,
+                    request_id=new_id("req"),
+                ),
+                provider=request.provider,
+                credentials=credentials,
+                deployment=request.deployment.model_dump(mode="json")
+                if request.deployment
+                else None,
+            )
+            descriptors.extend(discovered)
+        elif adapter.descriptor.models:
+            descriptors.extend(adapter.descriptor.models)
+        if request.model:
+            descriptors.append(self._manual_descriptor(request.provider, request.model))
+        if not descriptors:
+            raise ModelAccessException(
+                ErrorCode.MODEL_NOT_FOUND,
+                "provider did not return models and no manual model was supplied",
+                provider=request.provider.key,
+            )
+        return descriptors
+
+    @staticmethod
+    def _manual_descriptor(
+        provider: ProviderRef, model: ManualModelRegistration
+    ) -> ModelDescriptor:
+        return ModelDescriptor(
+            provider=provider,
+            model=model.model,
+            model_type=model.model_type,
+            label=model.label,
+            input_modalities=model.input_modalities,
+            output_modalities=model.output_modalities,
+            operations=model.operations,
+            features=model.features,
+            categories=model.categories,
+            context_window=model.context_window,
+            max_output_tokens=model.max_output_tokens,
+        )
+
+    @staticmethod
+    def _deduplicate(descriptors: list[ModelDescriptor]) -> list[ModelDescriptor]:
+        result: dict[tuple[str, str], ModelDescriptor] = {}
+        for item in descriptors:
+            result[(item.model, item.model_type.value)] = item
+        return list(result.values())
+
+    @staticmethod
+    def _request_hash(request: ModelRegistrationRequest) -> str:
+        data = request.model_dump(mode="json")
+        data["credential"]["api_key"] = hashlib.sha256(
+            request.credential.api_key.get_secret_value().encode("utf-8")
+        ).hexdigest()
+        payload = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _authorize_registration(
+        request: ModelRegistrationRequest, identity: CallerIdentity
+    ) -> None:
+        if identity.tenant_id != request.tenant_id:
+            raise ModelAccessException(ErrorCode.PERMISSION_DENIED, "tenant identity mismatch")
+        if not identity.is_service and identity.user_id != request.user_id:
+            raise ModelAccessException(ErrorCode.PERMISSION_DENIED, "user identity mismatch")
+        if request.credential.scope == CredentialScope.TENANT and not identity.is_admin:
+            raise ModelAccessException(
+                ErrorCode.PERMISSION_DENIED,
+                "tenant-scoped credentials require model administrator role",
+            )
+        if (
+            request.credential.scope == CredentialScope.SYSTEM
+            and "system_admin" not in identity.roles
+        ):
+            raise ModelAccessException(
+                ErrorCode.PERMISSION_DENIED,
+                "system-hosted credentials require system administrator role",
+            )
+
+    @staticmethod
+    def _authorize_list(query: ModelListQuery, identity: CallerIdentity) -> None:
+        if identity.tenant_id != query.tenant_id:
+            raise ModelAccessException(ErrorCode.PERMISSION_DENIED, "tenant identity mismatch")
+        if not (identity.is_admin or identity.is_service) and identity.user_id != query.user_id:
+            raise ModelAccessException(
+                ErrorCode.PERMISSION_DENIED, "cannot query another user's models"
+            )

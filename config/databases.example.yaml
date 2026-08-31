@@ -1,0 +1,61 @@
+databases:
+  catalog:
+    engine: postgresql
+    deployment: local
+    endpoints:
+      - host: 127.0.0.1
+        port: 5432
+        role: primary
+    database: model_access
+    schema_name: catalog
+    username_ref: env://MODEL_CATALOG_DB_USER
+    password_ref: env://MODEL_CATALOG_DB_PASSWORD
+    tls_mode: disable
+    pool:
+      min_size: 2
+      max_size: 20
+      connect_timeout_ms: 3000
+  usage:
+    engine: postgresql
+    deployment: cloud_cluster
+    endpoints:
+      - host: db-primary.internal
+        port: 5432
+        role: primary
+        zone: az-a
+      - host: db-replica.internal
+        port: 5432
+        role: replica
+        zone: az-b
+    database: model_usage
+    username_ref: env://MODEL_USAGE_DB_USER
+    password_ref: env://MODEL_USAGE_DB_PASSWORD
+    tls_mode: verify_full
+    pool:
+      min_size: 5
+      max_size: 80
+      connect_timeout_ms: 2000
+  audit:
+    engine: postgresql
+    deployment: cloud_cluster
+    endpoints:
+      - host: db-audit.internal
+        port: 5432
+        role: primary
+    database: model_audit
+    username_ref: env://MODEL_AUDIT_DB_USER
+    password_ref: env://MODEL_AUDIT_DB_PASSWORD
+    tls_mode: verify_full
+    required: false
+  cache:
+    engine: redis
+    deployment: cloud_cluster
+    endpoints:
+      - host: redis.internal
+        port: 6379
+        role: primary
+    username_ref: env://MODEL_CACHE_USER
+    password_ref: env://MODEL_CACHE_PASSWORD
+    tls_mode: require
+    required: false
+

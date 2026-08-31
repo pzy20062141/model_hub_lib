@@ -1,0 +1,25 @@
+protocol_version: "1.1"
+provider:
+  plugin_id: builtin/aliyun-bailian
+  provider_id: aliyun_bailian
+display_name:
+  default: Alibaba Cloud Model Studio
+  zh_Hans: 阿里云百炼
+supported_model_types:
+  - text_generation
+capabilities:
+  supports_streaming: true
+  supports_tools: true
+  supports_system_message: true
+  supports_token_counting: true
+dynamic_model_discovery: false
+models:
+  - model: qwen-plus
+    label: Qwen Plus
+    model_type: text_generation
+    input_modalities: [text]
+    output_modalities: [text]
+    categories: [TEXT_MODEL]
+    operations: [chat, text_completion]
+    features: [streaming, tool_calling]
+    context_window: 1000000

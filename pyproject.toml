@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "model-access-lib"
+version = "0.2.0"
+description = "Multi-tenant, provider-neutral model access library"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+authors = [{name = "Industrial Agent Platform"}]
+dependencies = [
+  "cryptography>=43,<51",
+  "httpx>=0.27,<1",
+  "opentelemetry-api>=1.29,<2",
+  "pydantic>=2.10,<3",
+  "PyYAML>=6,<7",
+  "SQLAlchemy>=2.0,<3",
+]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.32,<1"]
+postgres = ["psycopg[binary,pool]>=3.2,<4"]
+mysql = ["pymysql>=1.1,<2"]
+redis = ["redis>=5,<7"]
+otel = [
+  "opentelemetry-sdk>=1.29,<2",
+  "opentelemetry-exporter-otlp>=1.29,<2",
+]
+test = [
+  "fastapi>=0.115,<1",
+  "pytest>=8,<9",
+  "pytest-asyncio>=0.24,<1",
+  "ruff>=0.9,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["model_access"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP"]
+ignore = ["B008", "UP017"]
