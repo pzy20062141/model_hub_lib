@@ -158,6 +158,13 @@ class ModelRuntimeService:
         )
         try:
             adapter_result = await self._invoke_with_retry(adapter, invocation, span)
+        except asyncio.CancelledError:
+            exc = ModelAccessException(
+                ErrorCode.PROVIDER_UNAVAILABLE,
+                "model invocation was cancelled",
+            )
+            await self._finalize_failure(state, exc, span)
+            raise
         except ModelAccessException as exc:
             await self._finalize_failure(state, exc, span)
             raise
@@ -372,6 +379,19 @@ class ModelRuntimeService:
     ) -> InvocationResult:
         try:
             artifacts = await self._store_artifacts(state, response.artifacts)
+        except asyncio.CancelledError:
+            exc = ModelAccessException(
+                ErrorCode.PROVIDER_UNAVAILABLE,
+                "model invocation was cancelled",
+            )
+            await self._finalize_failure(
+                state,
+                exc,
+                span,
+                usage=response.usage,
+                provider_billed=True,
+            )
+            raise
         except Exception as exc:
             wrapped = ModelAccessException(
                 ErrorCode.INTERNAL_ERROR,
@@ -423,6 +443,13 @@ class ModelRuntimeService:
                 },
                 provider_payload=response.provider_payload,
             )
+        except asyncio.CancelledError:
+            exc = ModelAccessException(
+                ErrorCode.PROVIDER_UNAVAILABLE,
+                "model invocation was cancelled",
+            )
+            await self._finalize_failure(state, exc, span)
+            raise
         except Exception as exc:
             wrapped = ModelAccessException(
                 ErrorCode.INTERNAL_ERROR,
@@ -453,19 +480,20 @@ class ModelRuntimeService:
         span: SpanHandle,
     ) -> AsyncIterator[StreamEvent]:
         invocation_id = state.request.context.invocation_id or ""
-        yield StreamEvent(
-            event="response.created",
-            data={
-                "session_id": state.request.context.session_id,
-                "query_id": state.request.context.query_id,
-                "invocation_id": invocation_id,
-                "trace_id": state.trace_id,
-            },
-        )
         usage: Usage | None = None
         finish_reason: str | None = None
         first_chunk_seen = False
+        finalized = False
         try:
+            yield StreamEvent(
+                event="response.created",
+                data={
+                    "session_id": state.request.context.session_id,
+                    "query_id": state.request.context.query_id,
+                    "invocation_id": invocation_id,
+                    "trace_id": state.trace_id,
+                },
+            )
             async for chunk in chunks:
                 if chunk.delta:
                     if not first_chunk_seen:
@@ -482,25 +510,28 @@ class ModelRuntimeService:
                     usage = chunk.usage
                 if chunk.finish_reason:
                     finish_reason = chunk.finish_reason
+            latency_ms = int((time.monotonic() - state.started_at) * 1000)
+            await self._finalize_success(state, usage, latency_ms, span)
+            finalized = True
             if usage:
                 yield StreamEvent(event="usage", data=usage.model_dump(mode="json"))
             yield StreamEvent(
                 event="response.completed",
                 data={"finish_reason": finish_reason or "stop"},
             )
-            latency_ms = int((time.monotonic() - state.started_at) * 1000)
-            await self._finalize_success(state, usage, latency_ms, span)
         except ModelAccessException as exc:
+            await self._finalize_failure(
+                state, exc, span, usage=usage, provider_billed=first_chunk_seen
+            )
+            finalized = True
             yield StreamEvent(event="error", data=exc.to_dict())
-            await self._finalize_failure(
-                state, exc, span, usage=usage, provider_billed=first_chunk_seen
-            )
         except (GeneratorExit, asyncio.CancelledError):
-            span.set_attribute("model_access.cancelled", True)
-            exc = ModelAccessException(ErrorCode.PROVIDER_UNAVAILABLE, "stream was cancelled")
-            await self._finalize_failure(
-                state, exc, span, usage=usage, provider_billed=first_chunk_seen
-            )
+            if not finalized:
+                span.set_attribute("model_access.cancelled", True)
+                exc = ModelAccessException(ErrorCode.PROVIDER_UNAVAILABLE, "stream was cancelled")
+                await self._finalize_failure(
+                    state, exc, span, usage=usage, provider_billed=first_chunk_seen
+                )
             raise
         except Exception as exc:
             wrapped = ModelAccessException(
@@ -509,10 +540,11 @@ class ModelRuntimeService:
                 retryable=False,
             )
             span.record_exception(exc, wrapped.code.value)
-            yield StreamEvent(event="error", data=wrapped.to_dict())
             await self._finalize_failure(
                 state, wrapped, span, usage=usage, provider_billed=first_chunk_seen
             )
+            finalized = True
+            yield StreamEvent(event="error", data=wrapped.to_dict())
 
     async def _store_artifacts(
         self,

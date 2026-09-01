@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 
 import pytest
@@ -14,6 +15,7 @@ from model_access.contracts.enums import (
     QuotaOverrideMode,
     QuotaPeriodType,
     QuotaPolicySource,
+    ResponseMode,
     UserQuotaStatus,
 )
 from model_access.contracts.quota import (
@@ -175,6 +177,83 @@ async def test_failed_provider_call_releases_reservation(
         reservation = session.get(UserQuotaReservationRecord, request.context.invocation_id)
     assert reservation is not None
     assert reservation.status == "RELEASED"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_provider_call_releases_reservation(
+    client, provider_ref, provider_descriptor, model_descriptors
+) -> None:
+    model_id = await register_tenant_model(client, provider_ref)
+
+    class SlowAdapter(MockProviderAdapter):
+        async def invoke(self, invocation):  # type: ignore[no-untyped-def]
+            del invocation
+            await asyncio.Event().wait()
+
+    client.register_adapter(SlowAdapter(provider_descriptor, model_descriptors), replace=True)
+    request = chat_request(model_id)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(client.invoke(request, identity=tenant_admin()), timeout=0.01)
+
+    summary = client.get_user_quota(
+        tenant_id="tenant_001",
+        user_id="user_123",
+        roles=set(),
+        identity=tenant_admin(),
+    )
+    assert summary.credits_used == 0
+    assert summary.credits_reserved == 0
+    assert summary.credits_remaining == summary.credit_limit
+    with client.repository._sessions() as session:
+        reservation = session.get(UserQuotaReservationRecord, request.context.invocation_id)
+    assert reservation is not None
+    assert reservation.status == "RELEASED"
+
+
+@pytest.mark.asyncio
+async def test_closed_stream_releases_reservation(client, provider_ref) -> None:
+    model_id = await register_tenant_model(client, provider_ref)
+    stream = await client.invoke(
+        chat_request(model_id, mode=ResponseMode.STREAMING),
+        identity=tenant_admin(),
+    )
+    created = await anext(stream)  # type: ignore[arg-type]
+    assert created.event == "response.created"
+    await stream.aclose()  # type: ignore[union-attr]
+
+    summary = client.get_user_quota(
+        tenant_id="tenant_001",
+        user_id="user_123",
+        roles=set(),
+        identity=tenant_admin(),
+    )
+    assert summary.credits_used == 0
+    assert summary.credits_reserved == 0
+    assert summary.credits_remaining == summary.credit_limit
+
+
+@pytest.mark.asyncio
+async def test_closing_stream_after_completed_keeps_quota_balanced(
+    client, provider_ref
+) -> None:
+    model_id = await register_tenant_model(client, provider_ref)
+    stream = await client.invoke(
+        chat_request(model_id, mode=ResponseMode.STREAMING),
+        identity=tenant_admin(),
+    )
+    while (await anext(stream)).event != "response.completed":  # type: ignore[arg-type]
+        pass
+    await stream.aclose()  # type: ignore[union-attr]
+
+    summary = client.get_user_quota(
+        tenant_id="tenant_001",
+        user_id="user_123",
+        roles=set(),
+        identity=tenant_admin(),
+    )
+    assert summary.credits_used == Decimal("1.000000")
+    assert summary.credits_reserved == 0
+    assert summary.credits_used + summary.credits_remaining == summary.credit_limit
 
 
 def test_role_template_and_user_override(client) -> None:  # type: ignore[no-untyped-def]
