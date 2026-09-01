@@ -8,7 +8,10 @@ config/databases.example.yaml
 config/hosting.example.yaml
 config/otel-collector.example.yaml
 config/providers/aliyun-bailian.yaml
+config/providers/baidu-qianfan.yaml
+config/providers/deepseek.yaml
 config/providers/openai-compatible.yaml
+config/providers/volcengine-ark.yaml
 docs/api_examples.md
 docs/custom_provider.md
 docs/design_mapping.md
@@ -20,6 +23,10 @@ examples/custom_adapter.py
 examples/fastapi_app.py
 migrations/postgresql/001_initial.sql
 migrations/postgresql/002_provider_quota.sql
+migrations/postgresql/003_user_default_model.sql
+migrations/postgresql/004_tenant_default_model.sql
+migrations/postgresql/005_child_user_quota.sql
+migrations/postgresql/006_model_availability.sql
 openapi/model_access-v1.1.json
 scripts/export_openapi.py
 src/model_access/__init__.py
@@ -34,6 +41,7 @@ src/model_access/quota.py
 src/model_access/routing.py
 src/model_access/runtime.py
 src/model_access/security.py
+src/model_access/user_quota.py
 src/model_access/adapters/__init__.py
 src/model_access/adapters/manifest.py
 src/model_access/adapters/mock.py
@@ -50,6 +58,12 @@ src/model_access/persistence/__init__.py
 src/model_access/persistence/database.py
 src/model_access/persistence/models.py
 src/model_access/persistence/repository.py
+src/model_access/provider_manifests/__init__.py
+src/model_access/provider_manifests/aliyun-bailian.yaml
+src/model_access/provider_manifests/baidu-qianfan.yaml
+src/model_access/provider_manifests/deepseek.yaml
+src/model_access/provider_manifests/openai-compatible.yaml
+src/model_access/provider_manifests/volcengine-ark.yaml
 src/model_access_lib.egg-info/PKG-INFO
 src/model_access_lib.egg-info/SOURCES.txt
 src/model_access_lib.egg-info/dependency_links.txt
@@ -60,8 +74,10 @@ tests/conftest.py
 tests/helpers.py
 tests/test_aliyun_bailian_example.py
 tests/test_api.py
+tests/test_availability.py
 tests/test_contracts.py
 tests/test_control_runtime.py
+tests/test_default_models.py
 tests/test_manifest_routing.py
 tests/test_openai_adapter.py
 tests/test_quota_management.py
