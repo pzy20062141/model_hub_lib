@@ -67,6 +67,12 @@ registration = await client.register_model(
     identity=authenticated_identity,
     idempotency_key="register-001",
 )
+
+# 复用已加密保存的供应商凭据，显式注册额外模型时无需再次提交 API Key。
+additional = await client.register_model_with_credential(
+    existing_credential_model_request,
+    identity=authenticated_identity,
+)
 models = await client.list_models(list_query, identity=authenticated_identity)
 result_or_stream = await client.invoke(invocation, identity=authenticated_identity)
 ```
@@ -302,6 +308,7 @@ uv run python examples/aliyun_bailian_quota_demo.py
 核心接口：
 
 - `POST /api/v1/model-registrations`
+- `POST /api/v1/credential-model-registrations`
 - `GET /api/v1/models`
 - `POST /api/v1/model-invocations`
 - `GET /api/v1/model-defaults`

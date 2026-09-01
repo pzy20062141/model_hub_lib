@@ -11,6 +11,7 @@ from .adapters.registry import ProviderRegistry
 from .contracts.entities import CallerIdentity
 from .contracts.enums import ModelType
 from .contracts.invocation import (
+    ExistingCredentialModelRegistrationRequest,
     ModelInvocationRequest,
     ModelListQuery,
     ModelRegistrationRequest,
@@ -29,6 +30,7 @@ from .contracts.quota import (
 )
 from .contracts.responses import (
     AsyncInvocationResult,
+    ConfiguredModelRegistrationResult,
     InvocationResult,
     ModelListResult,
     RegistrationResult,
@@ -129,6 +131,17 @@ class ModelRepositoryClient:
             request,
             identity=identity,
             idempotency_key=idempotency_key,
+        )
+
+    async def register_model_with_credential(
+        self,
+        request: ExistingCredentialModelRegistrationRequest,
+        *,
+        identity: CallerIdentity,
+    ) -> ConfiguredModelRegistrationResult:
+        return await self.control_plane.register_model_with_credential(
+            request,
+            identity=identity,
         )
 
     async def list_models(

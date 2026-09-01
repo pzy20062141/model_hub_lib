@@ -15,6 +15,7 @@ from .contracts.common import PROTOCOL_VERSION, ensure_protocol_version
 from .contracts.entities import CallerIdentity
 from .contracts.enums import ErrorCode, ModelCategory, ModelStatus, ModelType
 from .contracts.invocation import (
+    ExistingCredentialModelRegistrationRequest,
     ModelInvocationRequest,
     ModelListQuery,
     ModelRegistrationRequest,
@@ -93,6 +94,22 @@ def create_router(
                 data=result,
             )
             return JSONResponse(status_code=201, content=jsonable_encoder(envelope))
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.post("/credential-model-registrations", status_code=201)
+    async def register_model_with_credential(
+        body: ExistingCredentialModelRegistrationRequest,
+        request: Request,
+        identity: CallerIdentity = Depends(resolve_identity),
+        protocol_header: Annotated[
+            str | None, Header(alias="X-Model-Protocol-Version")
+        ] = None,
+    ) -> JSONResponse:
+        try:
+            _validate_protocol_header(protocol_header, None)
+            result = await client.register_model_with_credential(body, identity=identity)
+            return _data_response(result, request, "req_credential_model_registration", 201)
         except ModelAccessException as exc:
             return _error_response(exc, request.headers.get("x-request-id"))
 
@@ -325,8 +342,14 @@ def create_router(
     return router
 
 
-def _data_response(data: Any, request: Request, fallback_request_id: str) -> JSONResponse:
+def _data_response(
+    data: Any,
+    request: Request,
+    fallback_request_id: str,
+    status_code: int = 200,
+) -> JSONResponse:
     return JSONResponse(
+        status_code=status_code,
         content=jsonable_encoder(
             ResponseEnvelope(
                 request_id=request.headers.get("x-request-id") or fallback_request_id,

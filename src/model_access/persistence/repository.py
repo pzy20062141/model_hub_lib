@@ -136,22 +136,25 @@ class ModelAccessRepository:
         result: RegistrationResult,
     ) -> None:
         with self._sessions.begin() as session:
-            session.add(
-                ProviderCredentialRecord(
-                    credential_id=credential_id,
-                    tenant_id=tenant_id,
-                    owner_user_id=owner_user_id,
-                    plugin_id=provider.provider.plugin_id,
-                    provider_id=provider.provider.provider_id,
-                    name=credential_name,
-                    base_url=base_url,
-                    encrypted_values=encrypted_values,
-                    api_key_masked=api_key_masked,
-                    scope=scope.value,
-                    status=CredentialStatus.VALID.value,
-                    deployment=deployment,
-                )
+            credential = ProviderCredentialRecord(
+                credential_id=credential_id,
+                tenant_id=tenant_id,
+                owner_user_id=owner_user_id,
+                plugin_id=provider.provider.plugin_id,
+                provider_id=provider.provider.provider_id,
+                name=credential_name,
+                base_url=base_url,
+                encrypted_values=encrypted_values,
+                api_key_masked=api_key_masked,
+                scope=scope.value,
+                status=CredentialStatus.VALID.value,
+                deployment=deployment,
             )
+            session.add(credential)
+            # These mapped classes deliberately do not expose ORM relationships.
+            # Flush the FK parent explicitly so PostgreSQL never schedules a
+            # configured_model insert before its provider_credential row.
+            session.flush([credential])
             for configured_model_id, descriptor in models:
                 session.add(
                     ConfiguredModelRecord(
@@ -218,6 +221,90 @@ class ModelAccessRepository:
                 event_type="PROVIDER_CREDENTIAL_CHANGED",
                 payload={"credential_id": credential_id, "scope": scope.value},
             )
+
+    def get_provider_credential(self, credential_id: str) -> ProviderCredentialRecord | None:
+        with self._sessions() as session:
+            return session.get(ProviderCredentialRecord, credential_id)
+
+    def add_model_to_credential(
+        self,
+        *,
+        configured_model_id: str,
+        credential: ProviderCredentialRecord,
+        provider: ProviderDescriptor,
+        descriptor: ModelDescriptor,
+        operator_user_id: str,
+    ) -> str:
+        with self._sessions.begin() as session:
+            existing = session.scalar(
+                select(ConfiguredModelRecord).where(
+                    ConfiguredModelRecord.credential_id == credential.credential_id,
+                    ConfiguredModelRecord.model == descriptor.model,
+                    ConfiguredModelRecord.model_type == descriptor.model_type.value,
+                )
+            )
+            if existing is not None:
+                return existing.configured_model_id
+            session.add(
+                ConfiguredModelRecord(
+                    configured_model_id=configured_model_id,
+                    tenant_id=credential.tenant_id,
+                    owner_user_id=credential.owner_user_id,
+                    credential_id=credential.credential_id,
+                    plugin_id=descriptor.provider.plugin_id,
+                    provider_id=descriptor.provider.provider_id,
+                    provider_display_name=provider.display_name.default,
+                    model=descriptor.model,
+                    label=descriptor.label,
+                    model_type=descriptor.model_type.value,
+                    categories=sorted(item.value for item in descriptor.categories),
+                    input_modalities=sorted(descriptor.input_modalities),
+                    output_modalities=sorted(descriptor.output_modalities),
+                    features=sorted(descriptor.features),
+                    operations=sorted(item.value for item in descriptor.operations),
+                    properties=descriptor.properties,
+                    parameter_schema=descriptor.parameter_schema,
+                    context_window=descriptor.context_window,
+                    max_output_tokens=descriptor.max_output_tokens,
+                    protocol_versions=sorted(descriptor.protocol_versions),
+                    status=descriptor.status.value,
+                    source="PROVIDER",
+                )
+            )
+            audit_id = f"reg_{uuid4().hex}"
+            session.add(
+                ModelRegistrationAuditRecord(
+                    audit_id=audit_id,
+                    tenant_id=credential.tenant_id,
+                    operator_user_id=operator_user_id,
+                    credential_id=credential.credential_id,
+                    action="REGISTER_MODEL",
+                    result="SUCCEEDED",
+                    details={
+                        "provider_id": descriptor.provider.provider_id,
+                        "configured_model_id": configured_model_id,
+                        "model": descriptor.model,
+                        "model_type": descriptor.model_type.value,
+                    },
+                )
+            )
+            source_key = self.provider_source_key(
+                credential.tenant_id,
+                descriptor.provider.plugin_id,
+                descriptor.provider.provider_id,
+            )
+            self._bump_source_version(session, source_key)
+            self._add_outbox(
+                session,
+                source_key=source_key,
+                event_type="CONFIGURED_MODEL_CHANGED",
+                payload={
+                    "credential_id": credential.credential_id,
+                    "configured_model_id": configured_model_id,
+                },
+            )
+            session.flush()
+            return configured_model_id
 
     def list_models(
         self,

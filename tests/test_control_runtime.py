@@ -14,6 +14,8 @@ from model_access.contracts.enums import (
 )
 from model_access.contracts.invocation import (
     EmbeddingInput,
+    ExistingCredentialModelRegistrationRequest,
+    ManualModelRegistration,
     ModelInvocationRequest,
     ModelListQuery,
     ModelSelector,
@@ -53,6 +55,23 @@ async def test_register_list_and_blocking_invoke(client, identity, provider_ref)
 
 
 @pytest.mark.asyncio
+async def test_registration_inserts_credential_before_fk_models(
+    client, identity, provider_ref
+) -> None:
+    with client.repository.engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+    registration = await client.register_model(
+        registration_request(provider_ref),
+        identity=identity,
+        idempotency_key="foreign-key-order",
+    )
+
+    assert registration.credential_id
+    assert len(registration.configured_model_ids) == 8
+
+
+@pytest.mark.asyncio
 async def test_credential_is_encrypted_at_rest(client, identity, provider_ref) -> None:
     result = await client.register_model(
         registration_request(provider_ref),
@@ -68,6 +87,65 @@ async def test_credential_is_encrypted_at_rest(client, identity, provider_ref) -
         assert record is not None
         assert "secret-key" not in record.encrypted_values
         assert record.api_key_masked != "secret-key"
+
+
+@pytest.mark.asyncio
+async def test_register_model_reuses_existing_encrypted_credential(
+    client, identity, provider_ref
+) -> None:
+    registration = await client.register_model(
+        registration_request(provider_ref),
+        identity=identity,
+        idempotency_key="existing-credential-1",
+    )
+    request = ExistingCredentialModelRegistrationRequest(
+        tenant_id="tenant_001",
+        user_id="user_123",
+        credential_id=registration.credential_id,
+        model=ManualModelRegistration(
+            model="mock-new-chat",
+            label="Mock New Chat",
+            model_type=ModelType.TEXT_GENERATION,
+            features={"streaming"},
+        ),
+    )
+
+    first = await client.register_model_with_credential(request, identity=identity)
+    replay = await client.register_model_with_credential(request, identity=identity)
+
+    assert replay.configured_model_id == first.configured_model_id
+    models = await client.list_models(
+        ModelListQuery(tenant_id="tenant_001", user_id="user_123"),
+        identity=identity,
+    )
+    added = next(item for item in models.items if item.model == "mock-new-chat")
+    assert added.credential.credential_id == registration.credential_id
+
+
+@pytest.mark.asyncio
+async def test_register_model_with_credential_checks_credential_owner(
+    client, identity, provider_ref
+) -> None:
+    registration = await client.register_model(
+        registration_request(provider_ref),
+        identity=identity,
+        idempotency_key="existing-credential-owner",
+    )
+    other = CallerIdentity(tenant_id="tenant_001", user_id="user_999")
+    with pytest.raises(ModelAccessException) as error:
+        await client.register_model_with_credential(
+            ExistingCredentialModelRegistrationRequest(
+                tenant_id="tenant_001",
+                user_id="user_999",
+                credential_id=registration.credential_id,
+                model=ManualModelRegistration(
+                    model="forbidden-model",
+                    model_type=ModelType.TEXT_GENERATION,
+                ),
+            ),
+            identity=other,
+        )
+    assert error.value.code == ErrorCode.PERMISSION_DENIED
 
 
 @pytest.mark.asyncio

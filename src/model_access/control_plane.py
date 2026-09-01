@@ -25,6 +25,7 @@ from .contracts.enums import (
     ProviderType,
 )
 from .contracts.invocation import (
+    ExistingCredentialModelRegistrationRequest,
     ManualModelRegistration,
     ModelListQuery,
     ModelRegistrationRequest,
@@ -32,6 +33,7 @@ from .contracts.invocation import (
 )
 from .contracts.responses import (
     ConfiguredModelItem,
+    ConfiguredModelRegistrationResult,
     CredentialSummary,
     ModelListResult,
     ProviderSummary,
@@ -213,6 +215,60 @@ class ModelControlPlaneService:
                     return replay.result
                 raise
             return result
+
+    async def register_model_with_credential(
+        self,
+        request: ExistingCredentialModelRegistrationRequest,
+        *,
+        identity: CallerIdentity,
+    ) -> ConfiguredModelRegistrationResult:
+        if identity.tenant_id != request.tenant_id:
+            raise ModelAccessException(ErrorCode.PERMISSION_DENIED, "tenant identity mismatch")
+        if not identity.is_service and identity.user_id != request.user_id:
+            raise ModelAccessException(ErrorCode.PERMISSION_DENIED, "user identity mismatch")
+        credential = self._repository.get_provider_credential(request.credential_id)
+        if credential is None or credential.tenant_id != request.tenant_id:
+            raise ModelAccessException(
+                ErrorCode.CREDENTIAL_REQUIRED,
+                "provider credential was not found",
+                field="credential_id",
+            )
+        scope = CredentialScope(credential.scope)
+        if scope == CredentialScope.TENANT and not identity.is_admin:
+            raise ModelAccessException(
+                ErrorCode.PERMISSION_DENIED,
+                "tenant-scoped credentials require model administrator role",
+            )
+        if scope == CredentialScope.SYSTEM and "system_admin" not in identity.roles:
+            raise ModelAccessException(
+                ErrorCode.PERMISSION_DENIED,
+                "system-hosted credentials require system administrator role",
+            )
+        if scope == CredentialScope.USER and credential.owner_user_id != identity.user_id:
+            raise ModelAccessException(
+                ErrorCode.PERMISSION_DENIED,
+                "user-scoped credential belongs to another user",
+            )
+        provider_ref = ProviderRef(
+            plugin_id=credential.plugin_id,
+            provider_id=credential.provider_id,
+        )
+        adapter = self._providers.get(provider_ref)
+        descriptor = self._manual_descriptor(provider_ref, request.model)
+        configured_model_id = self._repository.add_model_to_credential(
+            configured_model_id=new_id("cm"),
+            credential=credential,
+            provider=adapter.descriptor,
+            descriptor=descriptor,
+            operator_user_id=request.user_id,
+        )
+        return ConfiguredModelRegistrationResult(
+            configured_model_id=configured_model_id,
+            credential_id=credential.credential_id,
+            provider_id=credential.provider_id,
+            model=descriptor.model,
+            model_type=descriptor.model_type,
+        )
 
     async def list_models(
         self,

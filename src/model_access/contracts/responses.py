@@ -103,6 +103,15 @@ class RegistrationResult(StrictModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class ConfiguredModelRegistrationResult(StrictModel):
+    configured_model_id: str
+    credential_id: str
+    provider_id: str
+    model: str
+    model_type: ModelType
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class CredentialSummary(StrictModel):
     credential_id: str
     name: str

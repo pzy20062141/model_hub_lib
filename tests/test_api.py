@@ -38,6 +38,25 @@ def test_http_registration_defaults_catalog_and_invocation(client) -> None:
         )
         assert response.status_code == 201, response.text
         assert "api-secret" not in response.text
+        credential_id = response.json()["data"]["credential_id"]
+
+        response = http.post(
+            "/api/v1/credential-model-registrations",
+            json={
+                "tenant_id": "tenant_001",
+                "user_id": "user_123",
+                "credential_id": credential_id,
+                "model": {
+                    "model": "mock-chat-latest",
+                    "label": "Mock Chat Latest",
+                    "model_type": "text_generation",
+                    "features": ["streaming"],
+                },
+            },
+            headers=ADMIN_HEADERS,
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["data"]["credential_id"] == credential_id
 
         response = http.get(
             "/api/v1/models",

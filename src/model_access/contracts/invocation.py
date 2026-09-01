@@ -278,6 +278,15 @@ from .entities import CredentialInput  # noqa: E402  (resolves pydantic forward 
 ModelRegistrationRequest.model_rebuild()
 
 
+class ExistingCredentialModelRegistrationRequest(StrictModel):
+    """Register one model while reusing an encrypted provider credential."""
+
+    tenant_id: str
+    user_id: str
+    credential_id: str = Field(min_length=1, max_length=64)
+    model: ManualModelRegistration
+
+
 class ModelListQuery(StrictModel):
     tenant_id: str
     user_id: str
