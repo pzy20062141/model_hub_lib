@@ -335,7 +335,7 @@ uv run uvicorn examples.fastapi_app:app --reload
 ## 9. 数据库与迁移
 
 - SQLite：开发和测试可使用 `ModelRepositoryClient.sqlite()` 自动建表。
-- PostgreSQL：依次执行 `migrations/postgresql/001_initial.sql` 到 `005_child_user_quota.sql`。
+- PostgreSQL：依次执行 `migrations/postgresql/001_initial.sql` 到 `006_model_availability.sql`。
 - v0.3 运行时不再读取旧 `provider_quota`、`provider_preference` 和 `quota_reservation`。升级时先停止 v0.2 实例，再部署 v0.3；确认无回滚需求后可另行删除旧表。
 - `user_quota_reservation` 是在途额度事实源，`user_cost_ledger` 是已结算成本事实源。
 - 财务金额不使用二进制 Float；积分字段统一为 `NUMERIC(20,6)` / `Decimal`。

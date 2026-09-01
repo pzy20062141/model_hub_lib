@@ -28,6 +28,51 @@ def registration_payload() -> dict:
     }
 
 
+def test_http_availability_routes_require_admin(client) -> None:
+    app = create_app(client)
+    with TestClient(app) as http:
+        registration = http.post(
+            "/api/v1/model-registrations",
+            json=registration_payload(),
+            headers={**ADMIN_HEADERS, "Idempotency-Key": "api-availability"},
+        )
+        assert registration.status_code == 201, registration.text
+        model_id = registration.json()["data"]["configured_model_ids"][0]
+
+        denied_model = http.put(
+            "/api/v1/model-availability",
+            json={
+                "tenant_id": "tenant_001",
+                "configured_model_id": model_id,
+                "enabled": False,
+            },
+            headers=HEADERS,
+        )
+        denied_provider = http.put(
+            "/api/v1/provider-availability",
+            json={
+                "tenant_id": "tenant_001",
+                "provider": {"plugin_id": "builtin/mock", "provider_id": "mock"},
+                "enabled": False,
+            },
+            headers=HEADERS,
+        )
+        assert denied_model.status_code == 403
+        assert denied_provider.status_code == 403
+
+        changed = http.put(
+            "/api/v1/provider-availability",
+            json={
+                "tenant_id": "tenant_001",
+                "provider": {"plugin_id": "builtin/mock", "provider_id": "mock"},
+                "enabled": False,
+            },
+            headers=ADMIN_HEADERS,
+        )
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["data"]["enabled"] is False
+
+
 def test_http_registration_defaults_catalog_and_invocation(client) -> None:
     app = create_app(client)
     with TestClient(app) as http:

@@ -37,6 +37,7 @@ from .models import (
     ProviderQuotaRecord,
     QuotaReservationRecord,
     TenantDefaultModelRecord,
+    TenantProviderStatusRecord,
 )
 
 
@@ -44,6 +45,7 @@ from .models import (
 class ResolvedModelRecord:
     model: ConfiguredModelRecord
     credential: ProviderCredentialRecord
+    provider_enabled: bool = True
 
 
 @dataclass(slots=True)
@@ -344,19 +346,21 @@ class ModelAccessRepository:
                 )
             if query.provider_id:
                 statement = statement.where(ConfiguredModelRecord.provider_id == query.provider_id)
-            if query.status and query.status.value not in {
-                "QUOTA_EXCEEDED",
-                "NO_CONFIGURE",
-            }:
-                statement = statement.where(ConfiguredModelRecord.status == query.status.value)
             statement = statement.order_by(
                 ConfiguredModelRecord.provider_id,
                 ConfiguredModelRecord.model,
                 ConfiguredModelRecord.configured_model_id,
             )
             rows = session.execute(statement).all()
+            provider_status = self._provider_status_map(session, query.tenant_id)
             resolved = [
-                ResolvedModelRecord(model=model, credential=credential)
+                ResolvedModelRecord(
+                    model=model,
+                    credential=credential,
+                    provider_enabled=provider_status.get(
+                        (model.plugin_id, model.provider_id), True
+                    ),
+                )
                 for model, credential in rows
             ]
             if query.category:
@@ -416,7 +420,16 @@ class ModelAccessRepository:
             ).first()
             if not row:
                 return None
-            return ResolvedModelRecord(model=row[0], credential=row[1])
+            return ResolvedModelRecord(
+                model=row[0],
+                credential=row[1],
+                provider_enabled=self._provider_enabled(
+                    session,
+                    tenant_id=tenant_id,
+                    plugin_id=row[0].plugin_id,
+                    provider_id=row[0].provider_id,
+                ),
+            )
 
     def resolve_model_candidates(
         self,
@@ -453,7 +466,165 @@ class ModelAccessRepository:
                 )
                 .order_by(ConfiguredModelRecord.created_at.desc())
             ).all()
-            return [ResolvedModelRecord(model=row[0], credential=row[1]) for row in rows]
+            provider_enabled = self._provider_enabled(
+                session,
+                tenant_id=tenant_id,
+                plugin_id=plugin_id,
+                provider_id=provider_id,
+            )
+            return [
+                ResolvedModelRecord(
+                    model=row[0],
+                    credential=row[1],
+                    provider_enabled=provider_enabled,
+                )
+                for row in rows
+            ]
+
+    @staticmethod
+    def _provider_status_map(session, tenant_id: str) -> dict[tuple[str, str], bool]:  # type: ignore[no-untyped-def]
+        records = session.scalars(
+            select(TenantProviderStatusRecord).where(
+                TenantProviderStatusRecord.tenant_id == tenant_id
+            )
+        ).all()
+        return {(item.plugin_id, item.provider_id): item.enabled for item in records}
+
+    @staticmethod
+    def _provider_enabled(
+        session,  # type: ignore[no-untyped-def]
+        *,
+        tenant_id: str,
+        plugin_id: str,
+        provider_id: str,
+    ) -> bool:
+        record = session.get(
+            TenantProviderStatusRecord,
+            {
+                "tenant_id": tenant_id,
+                "plugin_id": plugin_id,
+                "provider_id": provider_id,
+            },
+        )
+        return record.enabled if record is not None else True
+
+    def is_provider_enabled(
+        self, *, tenant_id: str, plugin_id: str, provider_id: str
+    ) -> bool:
+        with self._sessions() as session:
+            return self._provider_enabled(
+                session,
+                tenant_id=tenant_id,
+                plugin_id=plugin_id,
+                provider_id=provider_id,
+            )
+
+    def set_provider_enabled(
+        self,
+        *,
+        tenant_id: str,
+        plugin_id: str,
+        provider_id: str,
+        enabled: bool,
+        operator_user_id: str | None,
+    ) -> bool:
+        key = {
+            "tenant_id": tenant_id,
+            "plugin_id": plugin_id,
+            "provider_id": provider_id,
+        }
+        source_key = self.provider_source_key(tenant_id, plugin_id, provider_id)
+        with self._sessions.begin() as session:
+            record = session.get(TenantProviderStatusRecord, key)
+            before = record.enabled if record is not None else True
+            if record is None:
+                if enabled:
+                    return True
+                record = TenantProviderStatusRecord(
+                    **key,
+                    enabled=False,
+                    updated_by_user_id=operator_user_id,
+                )
+                session.add(record)
+            elif record.enabled == enabled:
+                return enabled
+            else:
+                record.enabled = enabled
+                record.updated_by_user_id = operator_user_id
+                record.version += 1
+            session.add(
+                ModelRegistrationAuditRecord(
+                    audit_id=f"audit_{uuid4().hex}",
+                    tenant_id=tenant_id,
+                    operator_user_id=operator_user_id,
+                    credential_id=None,
+                    action="SET_PROVIDER_AVAILABILITY",
+                    result="SUCCEEDED",
+                    details={
+                        "plugin_id": plugin_id,
+                        "provider_id": provider_id,
+                        "before_enabled": before,
+                        "enabled": enabled,
+                    },
+                )
+            )
+            self._bump_source_version(session, source_key)
+            self._add_outbox(
+                session,
+                source_key=source_key,
+                event_type="PROVIDER_AVAILABILITY_CHANGED",
+                payload={"enabled": enabled},
+            )
+            return enabled
+
+    def set_model_enabled(
+        self,
+        *,
+        tenant_id: str,
+        configured_model_id: str,
+        enabled: bool,
+        operator_user_id: str | None,
+    ) -> ConfiguredModelRecord | None:
+        with self._sessions.begin() as session:
+            model = session.get(ConfiguredModelRecord, configured_model_id)
+            if model is None or model.tenant_id != tenant_id:
+                return None
+            next_status = ModelStatus.ACTIVE.value if enabled else ModelStatus.DISABLED.value
+            before_status = model.status
+            if before_status == next_status:
+                return model
+            model.status = next_status
+            session.add(
+                ModelRegistrationAuditRecord(
+                    audit_id=f"audit_{uuid4().hex}",
+                    tenant_id=tenant_id,
+                    operator_user_id=operator_user_id,
+                    credential_id=model.credential_id,
+                    action="SET_MODEL_AVAILABILITY",
+                    result="SUCCEEDED",
+                    details={
+                        "configured_model_id": configured_model_id,
+                        "plugin_id": model.plugin_id,
+                        "provider_id": model.provider_id,
+                        "before_status": before_status,
+                        "status": next_status,
+                    },
+                )
+            )
+            source_key = self.provider_source_key(
+                tenant_id, model.plugin_id, model.provider_id
+            )
+            self._bump_source_version(session, source_key)
+            self._add_outbox(
+                session,
+                source_key=source_key,
+                event_type="CONFIGURED_MODEL_AVAILABILITY_CHANGED",
+                payload={
+                    "configured_model_id": configured_model_id,
+                    "enabled": enabled,
+                },
+            )
+            return model
 
     def set_tenant_default_model(
         self,
@@ -488,8 +659,8 @@ class ModelAccessRepository:
         tenant_id: str,
     ) -> dict[ModelType, str]:
         with self._sessions() as session:
-            records = session.scalars(
-                select(TenantDefaultModelRecord)
+            rows = session.execute(
+                select(TenantDefaultModelRecord, ConfiguredModelRecord)
                 .join(
                     ConfiguredModelRecord,
                     TenantDefaultModelRecord.configured_model_id
@@ -510,7 +681,12 @@ class ModelAccessRepository:
                     ),
                 )
             ).all()
-            return {ModelType(record.model_type): record.configured_model_id for record in records}
+            provider_status = self._provider_status_map(session, tenant_id)
+            return {
+                ModelType(record.model_type): record.configured_model_id
+                for record, model in rows
+                if provider_status.get((model.plugin_id, model.provider_id), True)
+            }
 
     def get_tenant_default_model(
         self,

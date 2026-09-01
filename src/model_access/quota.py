@@ -503,7 +503,8 @@ class ManagedQuotaManager:
                 model=requested.model.model,
                 model_type=requested.model.model_type,
             )
-            if item.model.status == ModelStatus.ACTIVE.value
+            if item.provider_enabled
+            and item.model.status == ModelStatus.ACTIVE.value
             and item.credential.status == CredentialStatus.VALID.value
         ]
 

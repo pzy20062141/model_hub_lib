@@ -96,6 +96,30 @@ class ConfiguredModelRecord(Base):
     )
 
 
+class TenantProviderStatusRecord(Base):
+    """Tenant-scoped master switch for a provider.
+
+    Absence of a row means enabled. Keeping this state separate from each
+    configured model preserves model-level choices while a whole provider is
+    temporarily disabled.
+    """
+
+    __tablename__ = "tenant_provider_status"
+
+    tenant_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    plugin_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_by_user_id: Mapped[str | None] = mapped_column(String(128))
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 class TenantDefaultModelRecord(Base):
     __tablename__ = "tenant_default_model"
     __table_args__ = (Index("ix_tenant_default_model_configured", "configured_model_id"),)

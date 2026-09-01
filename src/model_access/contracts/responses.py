@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from .common import PROTOCOL_VERSION, StrictModel
+from .entities import ProviderRef
 from .enums import (
     CredentialScope,
     InvocationStatus,
@@ -140,6 +141,8 @@ class ConfiguredModelItem(StrictModel):
     max_output_tokens: int | None = None
     credential: CredentialSummary
     status: ModelStatus
+    model_enabled: bool = True
+    provider_enabled: bool = True
     provider_type: ProviderType = ProviderType.CUSTOM
     user_quota_status: UserQuotaStatus | None = None
     user_quota_remaining: Decimal | None = None
@@ -156,6 +159,20 @@ class ModelListResult(StrictModel):
 class TenantDefaultModelsResult(StrictModel):
     tenant_id: str
     defaults: dict[ModelType, str | None]
+
+
+class ConfiguredModelAvailabilityResult(StrictModel):
+    tenant_id: str
+    configured_model_id: str
+    enabled: bool
+    provider_enabled: bool
+    status: ModelStatus
+
+
+class ProviderAvailabilityResult(StrictModel):
+    tenant_id: str
+    provider: ProviderRef
+    enabled: bool
 
 
 class InvocationResult(StrictModel):

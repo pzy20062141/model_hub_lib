@@ -271,6 +271,11 @@ class ModelRuntimeService:
         request: ModelInvocationRequest, resolved: ResolvedModelRecord
     ) -> ResolvedModelRecord:
         assert request.model is not None
+        if not resolved.provider_enabled:
+            raise ModelAccessException(
+                ErrorCode.MODEL_DISABLED,
+                "configured model provider is disabled for this tenant",
+            )
         if resolved.model.status != ModelStatus.ACTIVE.value:
             code = (
                 ErrorCode.MODEL_DISABLED

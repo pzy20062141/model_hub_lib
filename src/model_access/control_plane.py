@@ -25,17 +25,21 @@ from .contracts.enums import (
     ProviderType,
 )
 from .contracts.invocation import (
+    ConfiguredModelAvailabilityUpdateRequest,
     ExistingCredentialModelRegistrationRequest,
     ManualModelRegistration,
     ModelListQuery,
     ModelRegistrationRequest,
+    ProviderAvailabilityUpdateRequest,
     TenantDefaultModelUpdateRequest,
 )
 from .contracts.responses import (
+    ConfiguredModelAvailabilityResult,
     ConfiguredModelItem,
     ConfiguredModelRegistrationResult,
     CredentialSummary,
     ModelListResult,
+    ProviderAvailabilityResult,
     ProviderSummary,
     RegistrationResult,
     TenantDefaultModelsResult,
@@ -313,8 +317,17 @@ class ModelControlPlaneService:
                     if record.credential.scope == CredentialScope.SYSTEM.value
                     else ProviderType.CUSTOM
                 )
-                status = ModelStatus(record.model.status)
-                if user_quota and user_quota.status.value in {"EXCEEDED", "DISABLED"}:
+                model_enabled = record.model.status == ModelStatus.ACTIVE.value
+                status = (
+                    ModelStatus(record.model.status)
+                    if record.provider_enabled
+                    else ModelStatus.DISABLED
+                )
+                if (
+                    status == ModelStatus.ACTIVE
+                    and user_quota
+                    and user_quota.status.value in {"EXCEEDED", "DISABLED"}
+                ):
                     status = ModelStatus.QUOTA_EXCEEDED
                 items.append(
                     ConfiguredModelItem(
@@ -341,6 +354,8 @@ class ModelControlPlaneService:
                             api_key_masked=record.credential.api_key_masked,
                         ),
                         status=status,
+                        model_enabled=model_enabled,
+                        provider_enabled=record.provider_enabled,
                         provider_type=provider_type,
                         user_quota_status=user_quota.status if user_quota else None,
                         user_quota_remaining=(user_quota.credits_remaining if user_quota else None),
@@ -364,6 +379,80 @@ class ModelControlPlaneService:
                 default_models=default_models,
                 user_quota=user_quota,
             )
+
+    async def set_model_availability(
+        self,
+        request: ConfiguredModelAvailabilityUpdateRequest,
+        *,
+        identity: CallerIdentity,
+    ) -> ConfiguredModelAvailabilityResult:
+        self._authorize_availability_update(request.tenant_id, identity)
+        model = self._repository.set_model_enabled(
+            tenant_id=request.tenant_id,
+            configured_model_id=request.configured_model_id,
+            enabled=request.enabled,
+            operator_user_id=identity.user_id,
+        )
+        if model is None:
+            raise ModelAccessException(
+                ErrorCode.MODEL_NOT_FOUND,
+                "configured model was not found",
+                field="configured_model_id",
+            )
+        provider_enabled = self._repository.is_provider_enabled(
+            tenant_id=request.tenant_id,
+            plugin_id=model.plugin_id,
+            provider_id=model.provider_id,
+        )
+        return ConfiguredModelAvailabilityResult(
+            tenant_id=request.tenant_id,
+            configured_model_id=model.configured_model_id,
+            enabled=model.status == ModelStatus.ACTIVE.value,
+            provider_enabled=provider_enabled,
+            status=(
+                ModelStatus(model.status) if provider_enabled else ModelStatus.DISABLED
+            ),
+        )
+
+    async def set_provider_availability(
+        self,
+        request: ProviderAvailabilityUpdateRequest,
+        *,
+        identity: CallerIdentity,
+    ) -> ProviderAvailabilityResult:
+        self._authorize_availability_update(request.tenant_id, identity)
+        self._providers.get(request.provider)
+        enabled = self._repository.set_provider_enabled(
+            tenant_id=request.tenant_id,
+            plugin_id=request.provider.plugin_id,
+            provider_id=request.provider.provider_id,
+            enabled=request.enabled,
+            operator_user_id=identity.user_id,
+        )
+        return ProviderAvailabilityResult(
+            tenant_id=request.tenant_id,
+            provider=request.provider,
+            enabled=enabled,
+        )
+
+    async def get_provider_availability(
+        self,
+        *,
+        tenant_id: str,
+        provider: ProviderRef,
+        identity: CallerIdentity,
+    ) -> ProviderAvailabilityResult:
+        self._authorize_tenant_access(tenant_id, identity)
+        self._providers.get(provider)
+        return ProviderAvailabilityResult(
+            tenant_id=tenant_id,
+            provider=provider,
+            enabled=self._repository.is_provider_enabled(
+                tenant_id=tenant_id,
+                plugin_id=provider.plugin_id,
+                provider_id=provider.provider_id,
+            ),
+        )
 
     async def set_default_model(
         self,
@@ -394,10 +483,10 @@ class ModelControlPlaneService:
                     "configured model type does not match the default model type",
                     field="configured_model_id",
                 )
-            if resolved.model.status != ModelStatus.ACTIVE.value:
+            if not resolved.provider_enabled or resolved.model.status != ModelStatus.ACTIVE.value:
                 raise ModelAccessException(
                     ErrorCode.MODEL_DISABLED,
-                    "disabled model cannot be selected as the default",
+                    "disabled provider or model cannot be selected as the default",
                     field="configured_model_id",
                 )
             if resolved.credential.status != CredentialStatus.VALID.value:
@@ -551,4 +640,16 @@ class ModelControlPlaneService:
             raise ModelAccessException(
                 ErrorCode.PERMISSION_DENIED,
                 "tenant administrator role is required to manage default models",
+            )
+
+    @staticmethod
+    def _authorize_availability_update(
+        tenant_id: str,
+        identity: CallerIdentity,
+    ) -> None:
+        ModelControlPlaneService._authorize_tenant_access(tenant_id, identity)
+        if not identity.is_admin:
+            raise ModelAccessException(
+                ErrorCode.PERMISSION_DENIED,
+                "model administrator role is required to manage availability",
             )

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 - 2026-09-01
+
+- 新增租户级供应商总开关与单模型开关，状态持久化且仅模型管理员可修改。
+- 供应商关闭时统一阻止目录展示为可用、默认模型选择和实际调用，同时保留各模型自身开关状态。
+- 新增 Client、FastAPI 可用性接口、审计/Outbox 事件和 PostgreSQL `006_model_availability.sql`。
+
 ## 0.3.3 - 2026-09-01
 
 - 修复 PostgreSQL 注册供应商凭据和目录模型时的外键写入顺序，先显式持久化 `provider_credential`，再插入 `configured_model`。

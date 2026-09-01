@@ -8,13 +8,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
 from .adapters.registry import ProviderRegistry
-from .contracts.entities import CallerIdentity
+from .contracts.entities import CallerIdentity, ProviderRef
 from .contracts.enums import ModelType
 from .contracts.invocation import (
+    ConfiguredModelAvailabilityUpdateRequest,
     ExistingCredentialModelRegistrationRequest,
     ModelInvocationRequest,
     ModelListQuery,
     ModelRegistrationRequest,
+    ProviderAvailabilityUpdateRequest,
     TenantDefaultModelUpdateRequest,
 )
 from .contracts.quota import (
@@ -30,9 +32,11 @@ from .contracts.quota import (
 )
 from .contracts.responses import (
     AsyncInvocationResult,
+    ConfiguredModelAvailabilityResult,
     ConfiguredModelRegistrationResult,
     InvocationResult,
     ModelListResult,
+    ProviderAvailabilityResult,
     RegistrationResult,
     StreamEvent,
     TenantDefaultModelsResult,
@@ -151,6 +155,41 @@ class ModelRepositoryClient:
         identity: CallerIdentity,
     ) -> ModelListResult:
         return await self.control_plane.list_models(query, identity=identity)
+
+    async def set_model_availability(
+        self,
+        request: ConfiguredModelAvailabilityUpdateRequest,
+        *,
+        identity: CallerIdentity,
+    ) -> ConfiguredModelAvailabilityResult:
+        return await self.control_plane.set_model_availability(
+            request,
+            identity=identity,
+        )
+
+    async def set_provider_availability(
+        self,
+        request: ProviderAvailabilityUpdateRequest,
+        *,
+        identity: CallerIdentity,
+    ) -> ProviderAvailabilityResult:
+        return await self.control_plane.set_provider_availability(
+            request,
+            identity=identity,
+        )
+
+    async def get_provider_availability(
+        self,
+        *,
+        tenant_id: str,
+        provider: ProviderRef,
+        identity: CallerIdentity,
+    ) -> ProviderAvailabilityResult:
+        return await self.control_plane.get_provider_availability(
+            tenant_id=tenant_id,
+            provider=provider,
+            identity=identity,
+        )
 
     async def invoke(
         self,

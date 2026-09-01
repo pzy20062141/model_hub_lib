@@ -303,6 +303,18 @@ class TenantDefaultModelUpdateRequest(StrictModel):
     configured_model_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class ConfiguredModelAvailabilityUpdateRequest(StrictModel):
+    tenant_id: str
+    configured_model_id: str = Field(min_length=1, max_length=64)
+    enabled: bool
+
+
+class ProviderAvailabilityUpdateRequest(StrictModel):
+    tenant_id: str
+    provider: ProviderRef
+    enabled: bool
+
+
 class ModelSelector(StrictModel):
     configured_model_id: str | None = None
     provider: ProviderRef | None = None

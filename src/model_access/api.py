@@ -12,13 +12,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .client import ModelRepositoryClient
 from .contracts.common import PROTOCOL_VERSION, ensure_protocol_version
-from .contracts.entities import CallerIdentity
+from .contracts.entities import CallerIdentity, ProviderRef
 from .contracts.enums import ErrorCode, ModelCategory, ModelStatus, ModelType
 from .contracts.invocation import (
+    ConfiguredModelAvailabilityUpdateRequest,
     ExistingCredentialModelRegistrationRequest,
     ModelInvocationRequest,
     ModelListQuery,
     ModelRegistrationRequest,
+    ProviderAvailabilityUpdateRequest,
     TenantDefaultModelUpdateRequest,
 )
 from .contracts.quota import (
@@ -148,6 +150,48 @@ def create_router(
                 data=result,
             )
             return JSONResponse(content=jsonable_encoder(envelope))
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.put("/model-availability")
+    async def set_model_availability(
+        body: ConfiguredModelAvailabilityUpdateRequest,
+        request: Request,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            result = await client.set_model_availability(body, identity=identity)
+            return _data_response(result, request, "req_model_availability")
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.put("/provider-availability")
+    async def set_provider_availability(
+        body: ProviderAvailabilityUpdateRequest,
+        request: Request,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            result = await client.set_provider_availability(body, identity=identity)
+            return _data_response(result, request, "req_provider_availability")
+        except ModelAccessException as exc:
+            return _error_response(exc, request.headers.get("x-request-id"))
+
+    @router.get("/provider-availability")
+    async def get_provider_availability(
+        request: Request,
+        tenant_id: str,
+        plugin_id: str,
+        provider_id: str,
+        identity: CallerIdentity = Depends(resolve_identity),
+    ) -> JSONResponse:
+        try:
+            result = await client.get_provider_availability(
+                tenant_id=tenant_id,
+                provider=ProviderRef(plugin_id=plugin_id, provider_id=provider_id),
+                identity=identity,
+            )
+            return _data_response(result, request, "req_provider_availability")
         except ModelAccessException as exc:
             return _error_response(exc, request.headers.get("x-request-id"))
 
