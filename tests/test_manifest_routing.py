@@ -27,6 +27,38 @@ def test_provider_manifest_builds_explicit_capabilities() -> None:
     assert ModelCategory.VISION_MODEL in models[0].categories
 
 
+def test_aliyun_bailian_manifest_includes_qwen_3_8_models() -> None:
+    manifest = load_provider_manifest("config/providers/aliyun-bailian.yaml")
+    descriptor, models = manifest.build()
+
+    assert descriptor.capabilities.supports_vision is True
+    assert descriptor.capabilities.supports_json_schema is True
+    assert descriptor.capabilities.supports_multimodal is True
+    qwen_models = {
+        item.model: item
+        for item in models
+        if item.model in {"qwen3.8-max", "qwen3.8-flash"}
+    }
+    assert set(qwen_models) == {"qwen3.8-max", "qwen3.8-flash"}
+    for model in qwen_models.values():
+        assert model.model_type == ModelType.TEXT_GENERATION
+        assert model.input_modalities == {"text", "image"}
+        assert model.output_modalities == {"text"}
+        assert model.categories == {
+            ModelCategory.TEXT_MODEL,
+            ModelCategory.VISION_MODEL,
+        }
+        assert model.operations == {ModelOperation.CHAT}
+        assert model.features == {
+            "streaming",
+            "tool_calling",
+            "json_schema",
+            "reasoning",
+        }
+        assert model.context_window == 1000000
+        assert model.max_output_tokens == 131072
+
+
 def test_aliyun_bailian_manifest_includes_text_embedding_models() -> None:
     manifest = load_provider_manifest("config/providers/aliyun-bailian.yaml")
     descriptor, models = manifest.build()

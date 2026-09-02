@@ -13,8 +13,11 @@ supported_model_types:
 capabilities:
   supports_streaming: true
   supports_tools: true
+  supports_vision: true
+  supports_json_schema: true
   supports_system_message: true
   supports_token_counting: true
+  supports_multimodal: true
 dynamic_model_discovery: false
 models:
   - model: qwen-plus
@@ -26,6 +29,26 @@ models:
     operations: [chat, text_completion]
     features: [streaming, tool_calling]
     context_window: 1000000
+  - model: qwen3.8-max
+    label: Qwen 3.8 Max
+    model_type: text_generation
+    input_modalities: [text, image]
+    output_modalities: [text]
+    categories: [TEXT_MODEL, VISION_MODEL]
+    operations: [chat]
+    features: [streaming, tool_calling, json_schema, reasoning]
+    context_window: 1000000
+    max_output_tokens: 131072
+  - model: qwen3.8-flash
+    label: Qwen 3.8 Flash
+    model_type: text_generation
+    input_modalities: [text, image]
+    output_modalities: [text]
+    categories: [TEXT_MODEL, VISION_MODEL]
+    operations: [chat]
+    features: [streaming, tool_calling, json_schema, reasoning]
+    context_window: 1000000
+    max_output_tokens: 131072
   - model: qwen3.7-text-embedding
     label: Qwen 3.7 Text Embedding
     model_type: embedding

@@ -4,6 +4,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from typing import cast
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -139,11 +140,14 @@ async def run_demo(
     manifest = load_builtin_provider_manifest("aliyun_bailian")
     provider_descriptor, model_manifest = manifest.build()
     provider_ref = provider_descriptor.provider
+    base_url_host = urlsplit(BASE_URL).hostname
+    if not base_url_host:
+        raise RuntimeError("Aliyun Bailian BASE_URL must include a hostname")
 
     client = ModelRepositoryClient.sqlite(
         ":memory:",
         encryption_key=FernetCredentialCipher.generate_key(),
-        url_policy=URLSecurityPolicy(allowed_hosts={"dashscope.aliyuncs.com"}),
+        url_policy=URLSecurityPolicy(allowed_hosts={base_url_host}),
     )
     client.register_adapter(
         OpenAICompatibleAdapter(
