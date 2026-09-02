@@ -289,7 +289,7 @@ await client.finalize_async_quota(
 
 `examples/aliyun_bailian_quota_demo.py` 演示：
 
-1. 管理员注册阿里百炼，Base URL 为 `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1`，Key 使用 `sk-xxxx` 占位。
+1. 管理员注册阿里百炼，Base URL 为 `https://llm-3wg685w4xnh5wgow.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`，Key 使用 `sk-xxxx` 占位。
 2. 租户管理员配置 qwen-plus 积分换算规则，为 `user_001` 设置月度 1,000 积分。
 3. 获取该用户可用的文本生成模型列表，选择第一个并保存为租户默认模型。
 4. 子用户省略 `model`，以非流式方式请求“你好，请问你可以做哪些事情”。

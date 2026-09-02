@@ -5,7 +5,7 @@ provider:
 display_name:
   default: Alibaba Cloud Model Studio
   zh_Hans: 阿里云百炼
-default_base_url: https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1
+default_base_url: https://llm-3wg685w4xnh5wgow.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
 supported_model_types:
   - text_generation
   - embedding
