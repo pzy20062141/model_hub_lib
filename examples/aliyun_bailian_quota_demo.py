@@ -33,7 +33,7 @@ from model_access.contracts.quota import (
 )
 from model_access.contracts.responses import InvocationResult, StreamEvent
 
-BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+BASE_URL = "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1"
 TENANT_ID = "tenant_aliyun_demo"
 ADMIN_USER_ID = "platform_admin"
 END_USER_ID = "user_001"

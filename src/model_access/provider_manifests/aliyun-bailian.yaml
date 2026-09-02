@@ -5,9 +5,11 @@ provider:
 display_name:
   default: Alibaba Cloud Model Studio
   zh_Hans: 阿里云百炼
-default_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+default_base_url: https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1
 supported_model_types:
   - text_generation
+  - embedding
+  - rerank
 capabilities:
   supports_streaming: true
   supports_tools: true
@@ -24,3 +26,35 @@ models:
     operations: [chat, text_completion]
     features: [streaming, tool_calling]
     context_window: 1000000
+  - model: qwen3.7-text-embedding
+    label: Qwen 3.7 Text Embedding
+    model_type: embedding
+    input_modalities: [text]
+    output_modalities: [vector]
+    categories: [VECTOR_MODEL]
+    operations: [embeddings]
+    context_window: 128000
+  - model: qwen3.7-text-embedding-flash
+    label: Qwen 3.7 Text Embedding Flash
+    model_type: embedding
+    input_modalities: [text]
+    output_modalities: [vector]
+    categories: [VECTOR_MODEL]
+    operations: [embeddings]
+    context_window: 128000
+  - model: qwen3.7-text-rerank
+    label: Qwen 3.7 Text Rerank
+    model_type: rerank
+    input_modalities: [text]
+    output_modalities: [json]
+    categories: [VECTOR_MODEL]
+    operations: [rerank]
+    context_window: 32768
+  - model: qwen3-rerank
+    label: Qwen 3 Rerank
+    model_type: rerank
+    input_modalities: [text]
+    output_modalities: [json]
+    categories: [VECTOR_MODEL]
+    operations: [rerank]
+    context_window: 4000

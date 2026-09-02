@@ -8,7 +8,13 @@ from model_access.adapters import (
     load_provider_manifest,
 )
 from model_access.contracts.entities import SelfHostedDeployment, SelfHostedEndpoint
-from model_access.contracts.enums import DeploymentMode, DeploymentProtocol, ModelCategory
+from model_access.contracts.enums import (
+    DeploymentMode,
+    DeploymentProtocol,
+    ModelCategory,
+    ModelOperation,
+    ModelType,
+)
 from model_access.persistence.database import DatabaseSettings
 from model_access.routing import SelfHostedEndpointRouter
 
@@ -19,6 +25,50 @@ def test_provider_manifest_builds_explicit_capabilities() -> None:
     assert descriptor.provider.provider_id == "openai_compatible"
     assert len(models) == 3
     assert ModelCategory.VISION_MODEL in models[0].categories
+
+
+def test_aliyun_bailian_manifest_includes_text_embedding_models() -> None:
+    manifest = load_provider_manifest("config/providers/aliyun-bailian.yaml")
+    descriptor, models = manifest.build()
+
+    assert set(descriptor.supported_model_types) == {
+        ModelType.TEXT_GENERATION,
+        ModelType.EMBEDDING,
+        ModelType.RERANK,
+    }
+    embedding_models = {
+        item.model: item for item in models if item.model_type == ModelType.EMBEDDING
+    }
+    assert set(embedding_models) == {
+        "qwen3.7-text-embedding",
+        "qwen3.7-text-embedding-flash",
+    }
+    for model in embedding_models.values():
+        assert model.input_modalities == {"text"}
+        assert model.output_modalities == {"vector"}
+        assert model.categories == {ModelCategory.VECTOR_MODEL}
+        assert model.operations == {ModelOperation.EMBEDDINGS}
+        assert model.features == set()
+        assert model.context_window == 128000
+
+
+def test_aliyun_bailian_manifest_includes_text_rerank_models() -> None:
+    manifest = load_provider_manifest("config/providers/aliyun-bailian.yaml")
+    _, models = manifest.build()
+
+    rerank_models = {item.model: item for item in models if item.model_type == ModelType.RERANK}
+    assert set(rerank_models) == {
+        "qwen3.7-text-rerank",
+        "qwen3-rerank",
+    }
+    assert rerank_models["qwen3.7-text-rerank"].context_window == 32768
+    assert rerank_models["qwen3-rerank"].context_window == 4000
+    for model in rerank_models.values():
+        assert model.input_modalities == {"text"}
+        assert model.output_modalities == {"json"}
+        assert model.categories == {ModelCategory.VECTOR_MODEL}
+        assert model.operations == {ModelOperation.RERANK}
+        assert model.features == set()
 
 
 @pytest.mark.parametrize(
