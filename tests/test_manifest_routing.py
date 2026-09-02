@@ -28,7 +28,7 @@ def test_provider_manifest_builds_explicit_capabilities() -> None:
             "config/providers/deepseek.yaml",
             "deepseek",
             "https://api.deepseek.com",
-            {"deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"},
+            {"deepseek-v4-flash", "deepseek-v4-pro"},
             True,
         ),
         (

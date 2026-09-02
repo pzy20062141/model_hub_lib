@@ -38,13 +38,3 @@ models:
     features: [streaming, tool_calling, json_schema, reasoning]
     context_window: 1000000
     max_output_tokens: 393216
-  - model: deepseek-v4-flash-vision-exp
-    label: DeepSeek V4 Flash Vision Experimental
-    model_type: text_generation
-    input_modalities: [text, image]
-    output_modalities: [text]
-    categories: [TEXT_MODEL, VISION_MODEL]
-    operations: [chat]
-    features: [streaming, tool_calling, json_schema, reasoning]
-    context_window: 1000000
-    max_output_tokens: 393216
