@@ -5,7 +5,7 @@ from .errors import ModelAccessException
 from .security import FernetCredentialCipher, URLSecurityPolicy
 from .user_quota import UserQuotaManager
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "FernetCredentialCipher",

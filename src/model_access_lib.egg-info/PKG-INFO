@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: model-access-lib
-Version: 0.4.0
+Version: 0.4.1
 Summary: Multi-tenant, provider-neutral model access library
 Author: Industrial Agent Platform
 License-Expression: LicenseRef-Proprietary

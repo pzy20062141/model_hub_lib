@@ -415,6 +415,8 @@ class ModelRuntimeService:
             artifacts=artifacts,
             usage=response.usage,
             provider_request_id=response.provider_request_id,
+            response_model=response.response_model,
+            finish_reason=response.finish_reason,
             latency_ms=latency_ms,
         )
         await self._finalize_success(state, response.usage, latency_ms, span)

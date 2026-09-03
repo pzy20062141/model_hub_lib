@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 - 2026-09-03
+
+- 修复阻塞模型调用丢失 `finish_reason` 和 `response_model` 的问题，确保 Adapter 响应元数据完整传递到 `InvocationResult`。
+
 ## 0.4.0 - 2026-09-01
 
 - 新增租户级供应商总开关与单模型开关，状态持久化且仅模型管理员可修改。

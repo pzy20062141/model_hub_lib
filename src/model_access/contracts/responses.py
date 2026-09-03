@@ -184,6 +184,8 @@ class InvocationResult(StrictModel):
     artifacts: list[ArtifactRef] = []
     usage: Usage | None = None
     provider_request_id: str | None = None
+    response_model: str | None = None
+    finish_reason: str | None = None
     latency_ms: int
 
 

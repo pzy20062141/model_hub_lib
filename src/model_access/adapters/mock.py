@@ -97,6 +97,8 @@ class MockProviderAdapter:
             output=output,
             usage=Usage(input_tokens=3, output_tokens=2, total_tokens=5, usage_source="provider"),
             provider_request_id="mock_request",
+            response_model=invocation.model,
+            finish_reason=output.get("finish_reason"),
         )
 
     async def _stream(self) -> AsyncIterator[AdapterChunk]:

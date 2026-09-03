@@ -52,6 +52,10 @@ async def test_register_list_and_blocking_invoke(client, identity, provider_ref)
     assert isinstance(result, InvocationResult)
     assert result.output["content"][0]["text"] == "mock response"
     assert result.usage and result.usage.total_tokens == 5
+    assert result.provider_request_id == "mock_request"
+    assert result.response_model == "mock-chat"
+    assert result.finish_reason == "stop"
+    assert result.model_dump()["finish_reason"] == "stop"
 
 
 @pytest.mark.asyncio
