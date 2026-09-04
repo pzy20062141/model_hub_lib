@@ -8,15 +8,30 @@ from sqlalchemy import select
 
 from model_access import ModelAccessException
 from model_access.adapters import MockProviderAdapter
-from model_access.contracts.entities import CallerIdentity, CredentialInput
+from model_access.contracts.entities import CallerIdentity, CredentialInput, RuntimeContext
 from model_access.contracts.enums import (
     CredentialScope,
     ErrorCode,
+    ModelOperation,
+    ModelType,
     QuotaOverrideMode,
     QuotaPeriodType,
     QuotaPolicySource,
     ResponseMode,
     UserQuotaStatus,
+)
+from model_access.contracts.invocation import (
+    ChatInput,
+    EmbeddingInput,
+    ImageContentPart,
+    ImageGenerationInput,
+    ModelInvocationRequest,
+    ModelListQuery,
+    ModelSelector,
+    PromptMessage,
+    SynthesisInput,
+    TextContentPart,
+    VideoGenerationInput,
 )
 from model_access.contracts.quota import (
     ModelCreditRateInput,
@@ -24,6 +39,7 @@ from model_access.contracts.quota import (
     UserQuotaAssignmentInput,
     UserQuotaTemplateInput,
 )
+from model_access.contracts.responses import Usage
 from model_access.persistence.models import (
     UserCostLedgerRecord,
     UserQuotaReservationRecord,
@@ -51,6 +67,15 @@ async def register_tenant_model(client, provider_ref) -> str:  # type: ignore[no
         request, identity=tenant_admin(), idempotency_key="tenant-model"
     )
     return result.configured_model_ids[0]
+
+
+async def register_tenant_models(client, provider_ref) -> dict[ModelType, str]:  # type: ignore[no-untyped-def]
+    await register_tenant_model(client, provider_ref)
+    result = await client.list_models(
+        ModelListQuery(tenant_id="tenant_001", user_id="user_123", page_size=50),
+        identity=tenant_admin(),
+    )
+    return {item.model_type: item.configured_model_id for item in result.items}
 
 
 def default_template(client, limit: Decimal):  # type: ignore[no-untyped-def]
@@ -84,9 +109,9 @@ async def test_default_policy_is_100_monthly_credits_and_success_is_costed(
     )
     assert summary.status == UserQuotaStatus.ACTIVE
     assert summary.credit_limit == Decimal("100.000000")
-    assert summary.credits_remaining == Decimal("99.000000")
-    assert summary.credits_used == Decimal("1.000000")
-    assert report.total_credits == Decimal("1.000000")
+    assert summary.credits_remaining == Decimal("99.995500")
+    assert summary.credits_used == Decimal("0.004500")
+    assert report.total_credits == Decimal("0.004500")
 
     aggregate = client.summarize_user_costs(
         tenant_id="tenant_001",
@@ -94,13 +119,27 @@ async def test_default_policy_is_100_monthly_credits_and_success_is_costed(
         identity=tenant_admin(),
     )
     assert aggregate.invocation_count == 1
-    assert aggregate.total_credits == Decimal("1.000000")
+    assert aggregate.total_credits == Decimal("0.004500")
     assert aggregate.by_user[0].user_id == "user_123"
+    with client.repository._sessions() as session:
+        ledger = session.scalar(select(UserCostLedgerRecord))
+    assert ledger is not None
+    assert ledger.rate_snapshot["billing_rule"] == "TEXT_GENERATION"
+    assert ledger.rate_snapshot["input_credits_per_1k"] == "0.5"
+    assert ledger.rate_snapshot["output_credits_per_1k"] == "1.5"
 
 
 @pytest.mark.asyncio
 async def test_user_budget_prevents_second_call(client, provider_ref) -> None:
     model_id = await register_tenant_model(client, provider_ref)
+    client.configure_model_credit_rate(
+        ModelCreditRateInput(
+            tenant_id="tenant_001",
+            configured_model_id=model_id,
+            per_request_credits=Decimal("1"),
+        ),
+        identity=tenant_admin(),
+    )
     default_template(client, Decimal("1"))
 
     await client.invoke(chat_request(model_id), identity=tenant_admin())
@@ -144,6 +183,103 @@ async def test_actual_cost_uses_rate_snapshot(client, provider_ref) -> None:
         ledger = session.scalar(select(UserCostLedgerRecord))
     assert ledger is not None
     assert ledger.rate_snapshot["version"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_builtin_multimodal_credit_rules(client, provider_ref) -> None:
+    model_ids = await register_tenant_models(client, provider_ref)
+    default_template(client, Decimal("10000"))
+
+    def request(
+        model_type: ModelType,
+        operation: ModelOperation,
+        input_value,
+        *,
+        response_mode: ResponseMode = ResponseMode.BLOCKING,
+    ) -> ModelInvocationRequest:
+        return ModelInvocationRequest(
+            context=RuntimeContext(tenant_id="tenant_001", user_id="user_123"),
+            model=ModelSelector(
+                configured_model_id=model_ids[model_type],
+                model_type=model_type,
+            ),
+            operation=operation,
+            response_mode=response_mode,
+            input=input_value,
+        )
+
+    await client.invoke(
+        request(
+            ModelType.TEXT_GENERATION,
+            ModelOperation.CHAT,
+            ChatInput(
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=[
+                            TextContentPart(type="text", text="describe"),
+                            ImageContentPart(type="image", uri="https://example.com/one.png"),
+                            ImageContentPart(type="image", uri="https://example.com/two.png"),
+                        ],
+                    )
+                ]
+            ),
+        ),
+        identity=tenant_admin(),
+    )
+    await client.invoke(
+        request(
+            ModelType.IMAGE_GENERATION,
+            ModelOperation.IMAGE_GENERATE,
+            ImageGenerationInput(prompt="factory", count=2),
+        ),
+        identity=tenant_admin(),
+    )
+    await client.invoke(
+        request(
+            ModelType.TEXT_TO_SPEECH,
+            ModelOperation.SYNTHESIZE,
+            SynthesisInput(text="字" * 1500),
+        ),
+        identity=tenant_admin(),
+    )
+    await client.invoke(
+        request(
+            ModelType.EMBEDDING,
+            ModelOperation.EMBEDDINGS,
+            EmbeddingInput(texts=["文" * 1000, "字" * 500]),
+        ),
+        identity=tenant_admin(),
+    )
+    video_request = request(
+        ModelType.VIDEO_GENERATION,
+        ModelOperation.VIDEO_GENERATE,
+        VideoGenerationInput(prompt="factory", duration=2),
+        response_mode=ResponseMode.ASYNC,
+    )
+    await client.invoke(video_request, identity=tenant_admin())
+    await client.finalize_async_quota(
+        invocation_id=video_request.context.invocation_id or "",
+        usage=Usage(
+            billable_units=2,
+            billable_unit_type="seconds",
+            usage_source="provider",
+        ),
+        succeeded=True,
+    )
+
+    report = client.query_user_costs(
+        tenant_id="tenant_001", user_id="user_123", identity=tenant_admin()
+    )
+    credits_by_operation = {item.operation: item.credits for item in report.items}
+    assert credits_by_operation == {
+        ModelOperation.CHAT.value: Decimal("10.004500"),
+        ModelOperation.IMAGE_GENERATE.value: Decimal("500.000000"),
+        ModelOperation.SYNTHESIZE.value: Decimal("600.000000"),
+        ModelOperation.EMBEDDINGS.value: Decimal("1.500000"),
+        ModelOperation.VIDEO_GENERATE.value: Decimal("2000.000000"),
+    }
+    assert report.total_credits == Decimal("3111.504500")
 
 
 @pytest.mark.asyncio
@@ -251,7 +387,7 @@ async def test_closing_stream_after_completed_keeps_quota_balanced(
         roles=set(),
         identity=tenant_admin(),
     )
-    assert summary.credits_used == Decimal("1.000000")
+    assert summary.credits_used == Decimal("0.004500")
     assert summary.credits_reserved == 0
     assert summary.credits_used + summary.credits_remaining == summary.credit_limit
 

@@ -17,7 +17,16 @@ from .contracts.enums import (
     ModelType,
     ResponseMode,
 )
-from .contracts.invocation import AdapterInvocation, ModelInvocationRequest
+from .contracts.invocation import (
+    AdapterInvocation,
+    ChatInput,
+    EmbeddingInput,
+    ImageContentPart,
+    ImageGenerationInput,
+    ModelInvocationRequest,
+    SynthesisInput,
+    VideoGenerationInput,
+)
 from .contracts.responses import (
     AdapterArtifact,
     AdapterAsyncTask,
@@ -326,11 +335,39 @@ class ModelRuntimeService:
         total = cls._estimate_tokens(request, resolved)
         input_tokens = max(1, (len(request.input.model_dump_json()) + 3) // 4)
         output_tokens = max(0, total - input_tokens)
+        billable_units: int = total
+        billable_unit_type = "tokens"
+        value = request.input
+        if isinstance(value, ChatInput):
+            image_count = sum(
+                isinstance(part, ImageContentPart)
+                for message in value.messages
+                for part in message.content
+            )
+            if image_count:
+                billable_units = image_count
+                billable_unit_type = "input_images"
+        elif isinstance(value, ImageGenerationInput):
+            billable_units = value.count
+            billable_unit_type = "output_images"
+        elif isinstance(value, SynthesisInput):
+            billable_units = len(value.text)
+            billable_unit_type = "characters"
+        elif isinstance(value, EmbeddingInput):
+            billable_units = sum(len(text) for text in value.texts)
+            billable_unit_type = "characters"
+        elif isinstance(value, VideoGenerationInput):
+            # The contract permits providers to apply their own default duration.
+            # Reserve one second when it is omitted; async settlement can supply
+            # the provider's actual seconds through Usage.
+            billable_units = value.duration or 1
+            billable_unit_type = "seconds"
         return Usage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total,
-            billable_units=total,
+            billable_units=billable_units,
+            billable_unit_type=billable_unit_type,
             usage_source="estimated",
         )
 

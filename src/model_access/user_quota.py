@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from .contracts.entities import CallerIdentity
 from .contracts.enums import (
     ErrorCode,
+    ModelOperation,
     QuotaOverrideMode,
     QuotaPeriodType,
     QuotaPolicySource,
@@ -50,6 +51,36 @@ from .persistence.repository import ModelAccessRepository
 
 _SCALE = Decimal("0.000001")
 _DEFAULT_CREDIT_LIMIT = Decimal("100")
+_BUILTIN_RATE_VERSION = "builtin-1"
+_BUILTIN_TEXT_INPUT_CREDITS_PER_1K = Decimal("0.5")
+_BUILTIN_TEXT_OUTPUT_CREDITS_PER_1K = Decimal("1.5")
+
+_BUILTIN_OPERATION_RATES: dict[str, tuple[str, Decimal, Decimal, str]] = {
+    ModelOperation.IMAGE_GENERATE.value: (
+        "output_images",
+        Decimal("1"),
+        Decimal("250"),
+        "IMAGE_GENERATION",
+    ),
+    ModelOperation.SYNTHESIZE.value: (
+        "characters",
+        Decimal("1000"),
+        Decimal("400"),
+        "TEXT_TO_SPEECH",
+    ),
+    ModelOperation.EMBEDDINGS.value: (
+        "characters",
+        Decimal("1000"),
+        Decimal("1"),
+        "TEXT_EMBEDDING",
+    ),
+    ModelOperation.VIDEO_GENERATE.value: (
+        "seconds",
+        Decimal("1"),
+        Decimal("1000"),
+        "VIDEO_GENERATION",
+    ),
+}
 
 
 def _decimal(value: Any) -> Decimal:
@@ -294,7 +325,13 @@ class UserQuotaManager:
                         ErrorCode.QUOTA_EXCEEDED, "child-user quota is disabled"
                     )
                 period = self._get_or_create_period(session, tenant_id, user_id, policy, now)
-                rate = self._rate_snapshot(session, tenant_id, configured_model_id)
+                rate = self._rate_snapshot(
+                    session,
+                    tenant_id,
+                    configured_model_id,
+                    operation=operation,
+                    estimated_usage=estimated_usage,
+                )
                 estimated = self._calculate(rate, estimated_usage)
                 statement = (
                     update(UserQuotaPeriodRecord)
@@ -377,8 +414,12 @@ class UserQuotaManager:
             if period is None:
                 raise RuntimeError("quota period no longer exists")
             actual_usage = usage
-            if succeeded and actual_usage is None and reservation.estimated_usage:
-                actual_usage = Usage.model_validate(reservation.estimated_usage)
+            if succeeded:
+                actual_usage = self._merge_billable_usage(
+                    reservation.rate_snapshot,
+                    reservation.estimated_usage,
+                    actual_usage,
+                )
             actual = (
                 self._calculate(reservation.rate_snapshot, actual_usage)
                 if succeeded and actual_usage
@@ -692,12 +733,46 @@ class UserQuotaManager:
         return period
 
     @staticmethod
-    def _rate_snapshot(session, tenant_id: str, configured_model_id: str) -> dict[str, str]:  # type: ignore[no-untyped-def]
+    def _rate_snapshot(
+        session,
+        tenant_id: str,
+        configured_model_id: str,
+        *,
+        operation: str,
+        estimated_usage: Usage,
+    ) -> dict[str, str]:  # type: ignore[no-untyped-def]
         rate = session.get(
             ModelCreditRateRecord,
             {"tenant_id": tenant_id, "configured_model_id": configured_model_id},
         )
         if rate is None:
+            if operation in {
+                ModelOperation.CHAT.value,
+                ModelOperation.TEXT_COMPLETION.value,
+            }:
+                if estimated_usage.billable_unit_type == "input_images":
+                    return UserQuotaManager._builtin_rate_snapshot(
+                        unit_type="input_images",
+                        unit_size=Decimal("1"),
+                        credits=Decimal("5"),
+                        input_credits_per_1k=_BUILTIN_TEXT_INPUT_CREDITS_PER_1K,
+                        output_credits_per_1k=_BUILTIN_TEXT_OUTPUT_CREDITS_PER_1K,
+                        rule="IMAGE_UNDERSTANDING_AND_TEXT_GENERATION",
+                    )
+                return UserQuotaManager._builtin_rate_snapshot(
+                    input_credits_per_1k=_BUILTIN_TEXT_INPUT_CREDITS_PER_1K,
+                    output_credits_per_1k=_BUILTIN_TEXT_OUTPUT_CREDITS_PER_1K,
+                    rule="TEXT_GENERATION",
+                )
+            builtin = _BUILTIN_OPERATION_RATES.get(operation)
+            if builtin:
+                unit_type, unit_size, credits, rule = builtin
+                return UserQuotaManager._builtin_rate_snapshot(
+                    unit_type=unit_type,
+                    unit_size=unit_size,
+                    credits=credits,
+                    rule=rule,
+                )
             return {
                 "per_request_credits": "1",
                 "input_credits_per_1k": "0",
@@ -714,6 +789,50 @@ class UserQuotaManager:
         }
 
     @staticmethod
+    def _builtin_rate_snapshot(
+        *,
+        rule: str,
+        unit_type: str | None = None,
+        unit_size: Decimal = Decimal("1"),
+        credits: Decimal = Decimal("0"),
+        input_credits_per_1k: Decimal = Decimal("0"),
+        output_credits_per_1k: Decimal = Decimal("0"),
+    ) -> dict[str, str]:
+        snapshot = {
+            "per_request_credits": "0",
+            "input_credits_per_1k": str(input_credits_per_1k),
+            "output_credits_per_1k": str(output_credits_per_1k),
+            "billable_unit_credits": str(credits),
+            "billing_rule": rule,
+            "version": _BUILTIN_RATE_VERSION,
+        }
+        if unit_type:
+            snapshot["billable_unit_type"] = unit_type
+            snapshot["billable_unit_size"] = str(unit_size)
+        return snapshot
+
+    @staticmethod
+    def _merge_billable_usage(
+        rate: dict[str, Any],
+        estimated_payload: dict[str, Any] | None,
+        actual: Usage | None,
+    ) -> Usage | None:
+        estimated = Usage.model_validate(estimated_payload) if estimated_payload else None
+        if actual is None:
+            return estimated
+        expected_type = rate.get("billable_unit_type")
+        if not expected_type or not estimated:
+            return actual
+        if actual.billable_unit_type == expected_type and actual.billable_units is not None:
+            return actual
+        return actual.model_copy(
+            update={
+                "billable_units": estimated.billable_units,
+                "billable_unit_type": estimated.billable_unit_type,
+            }
+        )
+
+    @staticmethod
     def _calculate(rate: dict[str, Any], usage: Usage | None) -> Decimal:
         if usage is None:
             return _decimal(rate.get("per_request_credits"))
@@ -728,8 +847,13 @@ class UserQuotaManager:
             * Decimal(usage.output_tokens or 0)
             / Decimal(1000)
         )
-        result += _decimal(rate.get("billable_unit_credits")) * Decimal(
-            str(usage.billable_units or 0)
+        unit_size = Decimal(str(rate.get("billable_unit_size") or 1))
+        if unit_size <= 0:
+            unit_size = Decimal("1")
+        result += (
+            _decimal(rate.get("billable_unit_credits"))
+            * Decimal(str(usage.billable_units or 0))
+            / unit_size
         )
         return result.quantize(_SCALE, rounding=ROUND_HALF_UP)
 

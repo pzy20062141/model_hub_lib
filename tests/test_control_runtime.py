@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from sqlalchemy import select
 
@@ -10,6 +12,7 @@ from model_access.contracts.enums import (
     ModelCategory,
     ModelOperation,
     ModelType,
+    QuotaPeriodType,
     ResponseMode,
 )
 from model_access.contracts.invocation import (
@@ -21,6 +24,7 @@ from model_access.contracts.invocation import (
     ModelSelector,
     VideoGenerationInput,
 )
+from model_access.contracts.quota import UserQuotaTemplateInput
 from model_access.contracts.responses import AsyncInvocationResult, InvocationResult
 from model_access.persistence.models import ProviderCredentialRecord
 
@@ -223,6 +227,17 @@ async def test_stream_event_order(client, identity, provider_ref) -> None:
 
 @pytest.mark.asyncio
 async def test_embedding_and_async_video(client, identity, provider_ref) -> None:
+    admin = identity.model_copy(update={"roles": {"tenant_admin"}})
+    client.configure_user_quota_template(
+        UserQuotaTemplateInput(
+            tenant_id="tenant_001",
+            name="multimodal test quota",
+            period_type=QuotaPeriodType.MONTH,
+            credit_limit=Decimal("2000"),
+            is_default=True,
+        ),
+        identity=admin,
+    )
     await client.register_model(
         registration_request(provider_ref),
         identity=identity,

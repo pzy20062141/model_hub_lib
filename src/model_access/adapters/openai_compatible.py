@@ -363,6 +363,11 @@ class OpenAICompatibleAdapter:
                     filename=f"speech.{value.format}",
                 )
             ],
+            usage=Usage(
+                billable_units=len(value.text),
+                billable_unit_type="characters",
+                usage_source="counted",
+            ),
             provider_request_id=response.headers.get("x-request-id"),
         )
 
@@ -485,7 +490,14 @@ class OpenAICompatibleAdapter:
                             },
                         )
                         index += 1
-                yield AdapterChunk(index=index, finish_reason="stop")
+                usage = None
+                if isinstance(invocation.input, SynthesisInput):
+                    usage = Usage(
+                        billable_units=len(invocation.input.text),
+                        billable_unit_type="characters",
+                        usage_source="counted",
+                    )
+                yield AdapterChunk(index=index, usage=usage, finish_reason="stop")
         except httpx.TimeoutException as exc:
             raise self._transport_error(invocation, ErrorCode.PROVIDER_TIMEOUT, exc) from exc
         except httpx.NetworkError as exc:
@@ -556,7 +568,12 @@ class OpenAICompatibleAdapter:
             return AdapterResponse(
                 output={"type": "image", "count": len(artifacts)},
                 artifacts=artifacts,
-                usage=usage,
+                usage=(usage or Usage(usage_source="counted")).model_copy(
+                    update={
+                        "billable_units": len(artifacts),
+                        "billable_unit_type": "output_images",
+                    }
+                ),
                 provider_request_id=request_id,
                 response_model=payload.get("model"),
             )

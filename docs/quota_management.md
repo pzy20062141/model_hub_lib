@@ -32,7 +32,20 @@
 - `output_credits_per_1k`
 - `billable_unit_credits`
 
-模型未配置时使用 1 积分/次。所有金额使用 `Decimal` 与数据库 `NUMERIC(20,6)`。调用预占时把规则写入 `rate_snapshot`，结算和历史查询不读取最新费率。
+模型未配置费率时使用以下内置换算规则：
+
+| 调用形态 | Usage 单位类型 | 换算规则 |
+| --- | --- | ---: |
+| 文本生成 | `input_tokens`、`output_tokens` | 输入 0.5 积分/千 Token，输出 1.5 积分/千 Token |
+| 图片理解（Chat 输入包含图片） | `input_images`、Token | 5 积分/张，另加文本生成 Token 积分 |
+| 图片生成 | `output_images` | 250 积分/张 |
+| TTS | `characters` | 400 积分/1000 字符 |
+| 文本向量化 | `characters` | 1 积分/1000 字符 |
+| 视频生成 | `seconds` | 1000 积分/秒 |
+
+文本 Token、TTS 和文本向量化均按比例计费，不按千单位向上取整。字符数按 Python Unicode 字符数统计，多个向量化文本累加字符数。图片理解统计所有 Chat 消息里的图片内容块，并与输入、输出 Token 积分相加；图片生成按请求张数预占，适配器能返回实际张数时按实际值结算。视频按请求 `duration` 预占；未提供时最低预占 1 秒，异步完成后可通过带 `billable_unit_type="seconds"` 的 Usage 按实际秒数结算。
+
+显式配置的模型费率优先于内置规则。所有金额使用 `Decimal` 与数据库 `NUMERIC(20,6)`。调用预占时把规则、单位类型和单位基数写入 `rate_snapshot`，结算和历史查询不读取最新费率。
 
 ## 4. 调用状态机
 

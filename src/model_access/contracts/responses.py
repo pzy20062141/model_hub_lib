@@ -30,6 +30,14 @@ class Usage(StrictModel):
     total_tokens: int | None = Field(default=None, ge=0)
     cache_read_input_tokens: int | None = Field(default=None, ge=0)
     billable_units: float | None = Field(default=None, ge=0)
+    billable_unit_type: Literal[
+        "tokens",
+        "provider_units",
+        "input_images",
+        "output_images",
+        "characters",
+        "seconds",
+    ] | None = None
     usage_source: Literal["provider", "counted", "estimated", "unknown"] = "unknown"
 
     @classmethod
@@ -41,12 +49,21 @@ class Usage(StrictModel):
         total_tokens = payload.get("total_tokens")
         if total_tokens is None and input_tokens is not None and output_tokens is not None:
             total_tokens = int(input_tokens) + int(output_tokens)
+        provider_billable_units = payload.get("billable_units")
+        billable_units = (
+            provider_billable_units if provider_billable_units is not None else total_tokens
+        )
         return cls(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             cache_read_input_tokens=payload.get("cache_read_input_tokens"),
-            billable_units=payload.get("billable_units", total_tokens),
+            billable_units=billable_units,
+            billable_unit_type=(
+                "provider_units" if provider_billable_units is not None else "tokens"
+            )
+            if billable_units is not None
+            else None,
             usage_source="provider",
         )
 
