@@ -134,6 +134,70 @@ async def test_discovery_and_blocking_chat_normalization() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reasoning_tool_history_is_preserved_for_thinking_models() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assistant = body["messages"][1]
+        assert assistant["reasoning_content"] == "先读取工作流设计规范"
+        assert assistant["tool_calls"][0]["function"]["name"] == "load_skill"
+        assert body["messages"][2]["role"] == "tool"
+        assert body["messages"][2]["tool_call_id"] == "call-1"
+        return httpx.Response(
+            200,
+            json={
+                "id": "chat-thinking",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "已加载规范",
+                            "reasoning_content": "继续完成设计",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    adapter, client, provider = build_adapter(handler)
+    request = invocation(provider)
+    request.input = ChatInput(
+        messages=[
+            PromptMessage(
+                role="user",
+                content=[TextContentPart(type="text", text="设计客服工作流")],
+            ),
+            PromptMessage(
+                role="assistant",
+                content=[],
+                reasoning_content="先读取工作流设计规范",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "load_skill",
+                            "arguments": '{"name":"workflow-design"}',
+                        },
+                    }
+                ],
+            ),
+            PromptMessage(
+                role="tool",
+                name="load_skill",
+                tool_call_id="call-1",
+                content=[TextContentPart(type="text", text="skill contents")],
+            ),
+        ]
+    )
+
+    response = await adapter.invoke(request)
+    assert isinstance(response, AdapterResponse)
+    assert response.output["reasoning_content"] == "继续完成设计"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_streaming_chat_and_image_artifact() -> None:
     png = b"\x89PNG\r\n\x1a\nmock"
 

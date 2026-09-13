@@ -284,11 +284,15 @@ class OpenAICompatibleAdapter:
                         },
                     }
                 )
-        result: dict[str, Any] = {"role": message.role, "content": parts}
+        result: dict[str, Any] = {"role": message.role, "content": parts or None}
         if message.name:
             result["name"] = message.name
         if message.tool_call_id:
             result["tool_call_id"] = message.tool_call_id
+        if message.reasoning_content is not None:
+            result["reasoning_content"] = message.reasoning_content
+        if message.tool_calls:
+            result["tool_calls"] = message.tool_calls
         return result
 
     async def _transcribe(
@@ -523,6 +527,7 @@ class OpenAICompatibleAdapter:
                 "type": "message",
                 "role": message.get("role", "assistant"),
                 "content": [{"type": "text", "text": message.get("content", "")}],
+                "reasoning_content": message.get("reasoning_content"),
                 "tool_calls": message.get("tool_calls"),
                 "finish_reason": choice.get("finish_reason"),
             }

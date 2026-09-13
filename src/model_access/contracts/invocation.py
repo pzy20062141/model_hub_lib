@@ -122,6 +122,8 @@ class PromptMessage(StrictModel):
     content: list[ContentPart]
     name: str | None = None
     tool_call_id: str | None = None
+    reasoning_content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 class ToolDefinition(StrictModel):
