@@ -353,6 +353,14 @@ class IdempotencyRecord(Base):
 
 class InvocationBindingRecord(Base):
     __tablename__ = "model_invocation_binding"
+    __table_args__ = (
+        Index(
+            "ix_model_invocation_binding_context",
+            "tenant_id",
+            "session_id",
+            "query_id",
+        ),
+    )
 
     invocation_id: Mapped[str] = mapped_column(String(160), primary_key=True)
     tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)

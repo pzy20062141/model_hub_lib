@@ -27,6 +27,7 @@ migrations/postgresql/003_user_default_model.sql
 migrations/postgresql/004_tenant_default_model.sql
 migrations/postgresql/005_child_user_quota.sql
 migrations/postgresql/006_model_availability.sql
+migrations/postgresql/007_invocation_binding_context_index.sql
 openapi/model_access-v1.1.json
 scripts/export_openapi.py
 src/model_access/__init__.py
@@ -80,4 +81,5 @@ tests/test_control_runtime.py
 tests/test_default_models.py
 tests/test_manifest_routing.py
 tests/test_openai_adapter.py
+tests/test_persistence_schema.py
 tests/test_quota_management.py
