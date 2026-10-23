@@ -1,6 +1,8 @@
 from .adapters import MockProviderAdapter, OpenAICompatibleAdapter, ProviderRegistry
 from .bundle import (
     BUNDLE_FORMAT,
+    BUNDLE_FORMATS,
+    LEGACY_BUNDLE_FORMAT,
     MANIFEST_NAME,
     BundleEntry,
     BundleError,
@@ -27,6 +29,8 @@ __all__ = [
     "ADAPTER_MERGE_REQUIRED_MESSAGE",
     "AdapterDeploymentStrategy",
     "BUNDLE_FORMAT",
+    "BUNDLE_FORMATS",
+    "LEGACY_BUNDLE_FORMAT",
     "BundleEntry",
     "BundleError",
     "BundleResult",

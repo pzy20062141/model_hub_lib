@@ -5,6 +5,9 @@ import tarfile
 import pytest
 
 from model_access.bundle import (
+    BUNDLE_FORMAT,
+    BUNDLE_FORMATS,
+    LEGACY_BUNDLE_FORMAT,
     MANIFEST_NAME,
     BundleError,
     build_checkpoint_bundle,
@@ -25,7 +28,7 @@ def test_manifest_is_the_first_member_and_lists_every_file(tmp_path):
     src = _checkpoint(tmp_path)
     result = build_checkpoint_bundle(src, tmp_path / "bundle.tar.gz")
 
-    with tarfile.open(result.path, "r:gz") as archive:
+    with tarfile.open(result.path, "r:*") as archive:
         members = archive.getnames()
     assert members[0] == MANIFEST_NAME
     assert members[1:] == ["config.json", "model.safetensors"]
@@ -118,3 +121,36 @@ def test_manifest_without_files_is_rejected(tmp_path):
         archive.addfile(info, io.BytesIO(payload))
     with pytest.raises(BundleError, match="lists no files"):
         read_bundle_manifest(path)
+
+
+def test_default_writes_a_plain_tar_not_gzip(tmp_path):
+    """默认必须是裸 tar：压缩在权重上是 CPU 花掉、体积几乎不省。"""
+    src = _checkpoint(tmp_path)
+    result = build_checkpoint_bundle(src, tmp_path / "b.tar")
+    with open(result.path, "rb") as fh:
+        head = fh.read(2)
+    assert head != b"\x1f\x8b", "默认不应产生 gzip 头"
+    # 裸 tar 仍能被 tarfile 正常解析
+    assert [e.path for e in read_bundle_manifest(result.path)] == ["config.json", "model.safetensors"]
+
+
+def test_legacy_gzip_archives_still_read(tmp_path):
+    """老产物（checkpoint-tar-gzip）必须继续可读，否则已注册的制品全废。"""
+    src = _checkpoint(tmp_path)
+    result = build_checkpoint_bundle(src, tmp_path / "old.tar.gz", compresslevel=6)
+    with open(result.path, "rb") as fh:
+        assert fh.read(2) == b"\x1f\x8b"
+    assert [e.path for e in read_bundle_manifest(result.path)] == ["config.json", "model.safetensors"]
+
+
+def test_plain_and_gzip_carry_the_same_manifest(tmp_path):
+    src = _checkpoint(tmp_path)
+    plain = build_checkpoint_bundle(src, tmp_path / "a.tar")
+    gz = build_checkpoint_bundle(src, tmp_path / "b.tar.gz", compresslevel=1)
+    assert read_bundle_manifest(plain.path) == read_bundle_manifest(gz.path)
+
+
+def test_format_constants_cover_both_encodings():
+    assert BUNDLE_FORMAT == "checkpoint-tar"
+    assert LEGACY_BUNDLE_FORMAT == "checkpoint-tar-gzip"
+    assert set(BUNDLE_FORMATS) == {BUNDLE_FORMAT, LEGACY_BUNDLE_FORMAT}
